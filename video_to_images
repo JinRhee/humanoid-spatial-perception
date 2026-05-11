@@ -1,0 +1,5 @@
+#!/usr/bin/env python3
+from src.hsp_pipeline.video_to_images import main
+
+if __name__ == "__main__":
+    main()
