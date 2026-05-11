@@ -1,0 +1,6 @@
+[submodule "external/MASt3R-SLAM"]
+	path = external/MASt3R-SLAM
+	url = https://github.com/rmurai0610/MASt3R-SLAM
+[submodule "external/segmast3r"]
+	path = external/segmast3r
+	url = https://github.com/SegMASt3R/segmast3r
