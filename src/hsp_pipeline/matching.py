@@ -39,7 +39,7 @@ def mutual_matches_with_dustbin(assign: np.ndarray) -> list[tuple[int, int, floa
             continue
         if int(col_best[j]) != i:
             continue
-        if int(row_best[i]) == n or int(np.argmax(assign[:, j])) == m:
+        if int(np.argmax(assign[:, j])) == m:
             continue
         out.append((i, j, float(assign[i, j])))
     return out

@@ -25,7 +25,7 @@ class SegmentRecord:
     sam3_score: float
     descriptor: np.ndarray
     points_3d: np.ndarray
-    mastsr_conf: np.ndarray
+    mast3r_conf: np.ndarray
     centroid_xyz: np.ndarray
     bbox_min: np.ndarray
     bbox_max: np.ndarray
@@ -76,8 +76,8 @@ class GlobalInstance:
     bbox_max: np.ndarray
     descriptor: np.ndarray
     sam3_stats: RunningStats = field(default_factory=RunningStats)
-    mastsr_conf_mean: float = 0.0
-    mastsr_conf_count: int = 0
+    mast3r_conf_mean: float = 0.0
+    mast3r_conf_count: int = 0
     support_count: int = 0
     first_ts: float = 0.0
     last_ts: float = 0.0
@@ -93,10 +93,10 @@ class GlobalInstance:
         self.descriptor = ema_decay * self.descriptor + (1.0 - ema_decay) * segment.descriptor
         self.sam3_stats.update(float(segment.sam3_score))
 
-        if segment.mastsr_conf.size:
-            total = self.mastsr_conf_mean * self.mastsr_conf_count + float(segment.mastsr_conf.sum())
-            self.mastsr_conf_count += int(segment.mastsr_conf.size)
-            self.mastsr_conf_mean = total / self.mastsr_conf_count
+        if segment.mast3r_conf.size:
+            total = self.mast3r_conf_mean * self.mast3r_conf_count + float(segment.mast3r_conf.sum())
+            self.mast3r_conf_count += int(segment.mast3r_conf.size)
+            self.mast3r_conf_mean = total / self.mast3r_conf_count
 
         self.support_count += 1
         self.last_ts = segment.frame_ts
@@ -105,7 +105,7 @@ class GlobalInstance:
         self.source_frame_list.append(segment.frame_ts)
 
     def as_json(self) -> dict[str, Any]:
-        combined = 0.5 * self.sam3_stats.mean + 0.5 * self.mastsr_conf_mean
+        combined = 0.5 * self.sam3_stats.mean + 0.5 * self.mast3r_conf_mean
         return {
             "instance_id": self.instance_id,
             "canonical_label": self.canonical_label,
@@ -118,7 +118,7 @@ class GlobalInstance:
             "last_ts": self.last_ts,
             "sam3_confidence": self.sam3_stats.mean,
             "sam3_confidence_std": self.sam3_stats.std,
-            "mastsr_confidence": self.mastsr_conf_mean,
+            "mast3r_confidence": self.mast3r_conf_mean,
             "combined_confidence": combined,
             "source_frames": self.source_frame_list,
         }

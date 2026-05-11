@@ -172,7 +172,7 @@ def run_semantics(
                 sam3_score=sam_score,
                 descriptor=descriptor,
                 points_3d=global_pts,
-                mastsr_conf=sel_conf,
+                mast3r_conf=sel_conf,
                 centroid_xyz=centroid,
                 bbox_min=bmin,
                 bbox_max=bmax,

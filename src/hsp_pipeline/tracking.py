@@ -147,7 +147,7 @@ class InstanceTracker:
                         sam3_score=b.sam3_stats.mean,
                         descriptor=b.descriptor,
                         points_3d=b.points_3d,
-                        mastsr_conf=np.array([b.mastsr_conf_mean], dtype=np.float32),
+                        mast3r_conf=np.array([b.mast3r_conf_mean], dtype=np.float32),
                         centroid_xyz=b.centroid,
                         bbox_min=b.bbox_min,
                         bbox_max=b.bbox_max,
@@ -168,12 +168,12 @@ class InstanceTracker:
                         a.descriptor = self.ema_decay * a.descriptor + (1.0 - self.ema_decay) * b.descriptor
                         a.sam3_stats.merge(b.sam3_stats)
                         total_conf = (
-                            a.mastsr_conf_mean * a.mastsr_conf_count
-                            + b.mastsr_conf_mean * b.mastsr_conf_count
+                            a.mast3r_conf_mean * a.mast3r_conf_count
+                            + b.mast3r_conf_mean * b.mast3r_conf_count
                         )
-                        a.mastsr_conf_count += b.mastsr_conf_count
-                        if a.mastsr_conf_count > 0:
-                            a.mastsr_conf_mean = total_conf / a.mastsr_conf_count
+                        a.mast3r_conf_count += b.mast3r_conf_count
+                        if a.mast3r_conf_count > 0:
+                            a.mast3r_conf_mean = total_conf / a.mast3r_conf_count
                         a.support_count += b.support_count
                         a.last_ts = max(a.last_ts, b.last_ts)
                         a.first_ts = min(a.first_ts, b.first_ts)

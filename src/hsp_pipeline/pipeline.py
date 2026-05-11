@@ -139,7 +139,7 @@ def _estimate_model_footprint_mb(cfg: PipelineConfig) -> dict[str, float]:
     fp16 = bool(cfg.memory.get("fp16", False))
     scale = 0.7 if fp16 else 1.0
     return {
-        "masts3r_backbone": 5000 * scale,
+        "mast3r_backbone": 5000 * scale,
         "sam3_image_model": 2800 * scale,
         "segmast3r_heads": 600 * scale,
     }

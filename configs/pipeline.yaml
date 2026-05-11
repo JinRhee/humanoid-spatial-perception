@@ -2,7 +2,7 @@ paths:
   input_dir: /home/runner/work/humanoid-spatial-perception/humanoid-spatial-perception/images
   output_dir: /home/runner/work/humanoid-spatial-perception/humanoid-spatial-perception/outputs
   checkpoints:
-    masts3r: /models/masts3r.ckpt
+    mast3r: /models/mast3r.ckpt
     segmast3r_head: /models/segmast3r_head.ckpt
     sam3: /models/sam3.pt
 

@@ -3,8 +3,8 @@ submodules:
   external/segmast3r: cd6583ec507ad6365a9e30bc94192e254d2d0002
   external/sam3: 4cbac146c1b5a1e3a7f5c6a894901090b4dfd65b
 model_checkpoints:
-  masts3r:
-    path: /models/masts3r.ckpt
+  mast3r:
+    path: /models/mast3r.ckpt
     sha256: ""
   segmast3r_head:
     path: /models/segmast3r_head.ckpt
