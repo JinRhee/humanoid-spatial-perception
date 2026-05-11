@@ -45,6 +45,20 @@ class RunningStats:
         delta2 = value - self.mean
         self.m2 += delta * delta2
 
+    def merge(self, other: "RunningStats") -> None:
+        if other.count == 0:
+            return
+        if self.count == 0:
+            self.count = other.count
+            self.mean = other.mean
+            self.m2 = other.m2
+            return
+        total = self.count + other.count
+        delta = other.mean - self.mean
+        self.m2 = self.m2 + other.m2 + delta * delta * self.count * other.count / total
+        self.mean = (self.mean * self.count + other.mean * other.count) / total
+        self.count = total
+
     @property
     def std(self) -> float:
         if self.count < 2:

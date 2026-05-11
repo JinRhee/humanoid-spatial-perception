@@ -8,9 +8,9 @@ Semantic 3D reconstruction orchestration wrapper around:
 ## Run
 
 ```bash
-/home/runner/work/humanoid-spatial-perception/humanoid-spatial-perception/run_pipeline \
-  --images_dir /home/runner/work/humanoid-spatial-perception/humanoid-spatial-perception/images \
-  --config /home/runner/work/humanoid-spatial-perception/humanoid-spatial-perception/configs/pipeline.yaml \
-  --output_dir /home/runner/work/humanoid-spatial-perception/humanoid-spatial-perception/outputs \
+./run_pipeline \
+  --images_dir /absolute/path/to/images \
+  --config /absolute/path/to/configs/pipeline.yaml \
+  --output_dir /absolute/path/to/output \
   --preset balanced
 ```

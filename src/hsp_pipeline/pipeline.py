@@ -321,7 +321,7 @@ def run_pipeline(images_dir: Path, config_path: Path, output_dir: Path, preset: 
             "stage_timings_seconds": [{"stage": t.name, "seconds": t.seconds} for t in timings],
         }
         dump_yaml_file(output_dir / "run_metadata.yaml", run_meta)
-        timings.append(_log_stage("metadata", t0, {"path": str(output_dir / 'run_metadata.yaml')}))
+        timings.append(_log_stage("metadata", t0, {"path": str(output_dir / "run_metadata.yaml")}))
 
     except Exception as exc:
         _write_error_report(output_dir, stage=(timings[-1].name if timings else "startup"), err=exc, last_frame=last_successful_frame)
