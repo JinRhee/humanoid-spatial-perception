@@ -3,8 +3,6 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .pipeline import run_pipeline
-
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Semantic 3D reconstruction pipeline")
@@ -17,6 +15,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
+    from .pipeline import run_pipeline
+
     run_pipeline(
         images_dir=args.images_dir,
         config_path=args.config,
