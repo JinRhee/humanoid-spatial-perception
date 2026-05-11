@@ -4,3 +4,6 @@
 [submodule "external/segmast3r"]
 	path = external/segmast3r
 	url = https://github.com/SegMASt3R/segmast3r
+[submodule "external/sam3"]
+	path = external/sam3
+	url = https://github.com/facebookresearch/sam3
