@@ -59,5 +59,7 @@ def write_ply_xyzrgb(path: Path, points: np.ndarray, colors: np.ndarray) -> None
         f.write("property float x\nproperty float y\nproperty float z\n")
         f.write("property uchar red\nproperty uchar green\nproperty uchar blue\n")
         f.write("end_header\n")
-        table = np.column_stack([pts, rgb.astype(np.float32)])
-        np.savetxt(f, table, fmt=["%.6f", "%.6f", "%.6f", "%d", "%d", "%d"])
+        f.writelines(
+            f"{p[0]:.6f} {p[1]:.6f} {p[2]:.6f} {int(c[0])} {int(c[1])} {int(c[2])}\n"
+            for p, c in zip(pts, rgb)
+        )

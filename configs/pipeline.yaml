@@ -1,6 +1,6 @@
 paths:
-  input_dir: /home/runner/work/humanoid-spatial-perception/humanoid-spatial-perception/images
-  output_dir: /home/runner/work/humanoid-spatial-perception/humanoid-spatial-perception/outputs
+  input_dir: images
+  output_dir: outputs
   checkpoints:
     mast3r: /models/mast3r.ckpt
     segmast3r_head: /models/segmast3r_head.ckpt
@@ -16,10 +16,10 @@ geometry:
   global_ba_interval: 50
 
 semantics:
-  prompt_file: /home/runner/work/humanoid-spatial-perception/humanoid-spatial-perception/configs/prompts.txt
+  prompt_file: configs/prompts.txt
   detection_conf_threshold: 0.01
   point_conf_min: 0.10
-  synonym_map: /home/runner/work/humanoid-spatial-perception/humanoid-spatial-perception/configs/synonyms.yaml
+  synonym_map: configs/synonyms.yaml
   structural_labels: [wall, floor, ceiling]
 
 fusion:

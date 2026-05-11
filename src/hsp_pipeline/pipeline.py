@@ -164,6 +164,7 @@ def _guard_vram(cfg: PipelineConfig) -> None:
 
 
 def run_pipeline(images_dir: Path, config_path: Path, output_dir: Path, preset: str | None) -> None:
+    config_path = config_path.resolve()
     output_dir = output_dir.resolve()
     ensure_dir(output_dir)
 
@@ -212,8 +213,8 @@ def run_pipeline(images_dir: Path, config_path: Path, output_dir: Path, preset: 
         timings.append(_log_stage("geometry", t0, {"poses": len(geom.trajectory), **_memory_snapshot()}))
 
         t0 = time.time()
-        prompt_path = Path(str(cfg.semantics["prompt_file"]))
-        synonym_path = Path(str(cfg.semantics["synonym_map"]))
+        prompt_path = (config_path.parent / str(cfg.semantics["prompt_file"])).resolve()
+        synonym_path = (config_path.parent / str(cfg.semantics["synonym_map"])).resolve()
         prompts = load_prompts(prompt_path, set(x.lower() for x in cfg.semantics.get("structural_labels", [])))
         synonyms = load_synonyms(synonym_path)
         sem = run_semantics(
@@ -299,12 +300,15 @@ def run_pipeline(images_dir: Path, config_path: Path, output_dir: Path, preset: 
         }
         checkpoints = cfg.paths.get("checkpoints", {})
         checkpoint_info = {
-            name: {"path": p, "sha256": _sha256(Path(p)) if p else ""}
+            name: {
+                "path": p,
+                "sha256": _sha256((config_path.parent / str(p)).resolve()) if p else "",
+            }
             for name, p in checkpoints.items()
         }
 
-        prompt_file = Path(str(cfg.semantics["prompt_file"]))
-        synonym_file = Path(str(cfg.semantics["synonym_map"]))
+        prompt_file = prompt_path
+        synonym_file = synonym_path
 
         run_meta = {
             "run_timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
