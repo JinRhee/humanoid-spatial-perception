@@ -142,7 +142,7 @@ def convert_video_to_images(
     output_dir.mkdir(parents=True, exist_ok=True)
     timestamps = _probe_timestamps(ffprobe_bin, input_video)
 
-    with tempfile.TemporaryDirectory(prefix="video_to_images_", dir="/tmp") as temp_root:
+    with tempfile.TemporaryDirectory(prefix="video_to_images_") as temp_root:
         temp_dir = Path(temp_root)
         extracted = _extract_frames(ffmpeg_bin, input_video, temp_dir, jpeg_quality)
 
@@ -153,6 +153,7 @@ def convert_video_to_images(
 
         target_names: list[Path] = []
         prev_pair: tuple[int, int] | None = None
+        first_pair: tuple[int, int] | None = None
         for ts in timestamps:
             pair = _to_sec_nsec(ts, start_sec, start_nsec)
             if prev_pair is not None and pair <= prev_pair:
@@ -164,6 +165,8 @@ def convert_video_to_images(
             if target.exists():
                 raise FileExistsError(f"Refusing to overwrite existing frame: {target}")
             target_names.append(target)
+            if first_pair is None:
+                first_pair = pair
             prev_pair = pair
 
         for src, dst in zip(extracted, target_names):
@@ -171,7 +174,7 @@ def convert_video_to_images(
 
         print(
             f"Wrote {len(target_names)} frames from {input_video} to {output_dir} "
-            f"starting at images_{target_names[0].stem.split('_')[1]}_{target_names[0].stem.split('_')[2]}.jpg"
+            f"starting at images_{first_pair[0]}_{first_pair[1]}.jpg"
         )
 
 
