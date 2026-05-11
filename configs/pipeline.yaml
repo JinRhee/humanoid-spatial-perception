@@ -1,0 +1,77 @@
+paths:
+  input_dir: /home/runner/work/humanoid-spatial-perception/humanoid-spatial-perception/images
+  output_dir: /home/runner/work/humanoid-spatial-perception/humanoid-spatial-perception/outputs
+  checkpoints:
+    masts3r: /models/masts3r.ckpt
+    segmast3r_head: /models/segmast3r_head.ckpt
+    sam3: /models/sam3.pt
+
+keyframe:
+  mode: fixed_frequency
+  target_hz: 5.0
+
+geometry:
+  loop_closure_similarity_threshold: 0.85
+  max_pair_distance: 3.0
+  global_ba_interval: 50
+
+semantics:
+  prompt_file: /home/runner/work/humanoid-spatial-perception/humanoid-spatial-perception/configs/prompts.txt
+  detection_conf_threshold: 0.01
+  point_conf_min: 0.10
+  synonym_map: /home/runner/work/humanoid-spatial-perception/humanoid-spatial-perception/configs/synonyms.yaml
+  structural_labels: [wall, floor, ceiling]
+
+fusion:
+  merge_weights:
+    descriptor: 0.40
+    centroid: 0.25
+    iou: 0.25
+    size: 0.10
+  merge_threshold: 0.55
+  max_centroid_distance: 3.0
+  label_mismatch_penalty: 0.5
+  ema_decay: 0.90
+  min_support_count: 2
+  resweep_interval: 25
+  skip_resweep: false
+
+memory:
+  max_image_resolution: 640
+  max_masks_per_frame: 60
+  fp16: true
+  cpu_offload: true
+
+presets:
+  quality:
+    keyframe:
+      mode: all_frames
+    memory:
+      max_image_resolution: 0
+      max_masks_per_frame: 100
+      fp16: false
+      cpu_offload: false
+    fusion:
+      skip_resweep: false
+  balanced:
+    keyframe:
+      mode: fixed_frequency
+      target_hz: 5.0
+    memory:
+      max_image_resolution: 640
+      max_masks_per_frame: 60
+      fp16: true
+      cpu_offload: true
+    fusion:
+      skip_resweep: false
+  near_realtime:
+    keyframe:
+      mode: fixed_frequency
+      target_hz: 3.0
+    memory:
+      max_image_resolution: 480
+      max_masks_per_frame: 30
+      fp16: true
+      cpu_offload: true
+    fusion:
+      skip_resweep: true
