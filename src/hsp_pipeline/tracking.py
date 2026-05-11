@@ -147,7 +147,7 @@ class InstanceTracker:
                         sam3_score=b.sam3_stats.mean,
                         descriptor=b.descriptor,
                         points_3d=b.points_3d,
-                        mast3r_conf=np.array([b.mast3r_conf_mean], dtype=np.float32),
+                        mast3r_conf=np.zeros((0,), dtype=np.float32),
                         centroid_xyz=b.centroid,
                         bbox_min=b.bbox_min,
                         bbox_max=b.bbox_max,

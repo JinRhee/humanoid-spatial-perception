@@ -40,10 +40,10 @@ class RunningStats:
 
     def update(self, value: float) -> None:
         self.count += 1
-        delta = value - self.mean
-        self.mean += delta / self.count
-        delta2 = value - self.mean
-        self.m2 += delta * delta2
+        delta_before = value - self.mean
+        self.mean += delta_before / self.count
+        delta_after = value - self.mean
+        self.m2 += delta_before * delta_after
 
     def merge(self, other: "RunningStats") -> None:
         if other.count == 0:
