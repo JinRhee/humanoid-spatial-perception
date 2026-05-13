@@ -7,7 +7,7 @@ from PIL import Image
 
 from .types import FrameRecord
 
-_IMAGE_RE = re.compile(r"^images_(\d+)_(\d+)\.jpg$")
+_IMAGE_RE = re.compile(r"^image_(\d+)_(\d+)\.jpg$")
 
 
 def _parse_name(path: Path) -> tuple[int, int]:

@@ -197,7 +197,8 @@ def run_pipeline(images_dir: Path, config_path: Path, output_dir: Path, preset: 
                 },
             )
         )
-
+        
+        print(f"Run geometry")
         t0 = time.time()
         geom = run_geometry(selected, cfg.geometry)
         sanity_check_geometry(geom.trajectory, geom.pointclouds)
@@ -205,13 +206,15 @@ def run_pipeline(images_dir: Path, config_path: Path, output_dir: Path, preset: 
         pcd_dir = output_dir / "pointclouds"
         ensure_dir(pcd_dir)
         for fr in selected:
+            print(f"Frame {fr.sec:010d}_{fr.nsec:09d}")
             pc = geom.pointclouds.get((fr.sec, fr.nsec), np.zeros((0, 3), dtype=np.float32))
-            write_pcd_xyz(pcd_dir / f"pointcloud_{fr.sec}_{fr.nsec}.pcd", pc)
+            write_pcd_xyz(pcd_dir / f"pcd_{fr.sec:010d}_{fr.nsec:09d}.pcd", pc)
             last_successful_frame = f"{fr.sec}_{fr.nsec}"
         write_pcd_xyz(output_dir / "map_final.pcd", geom.global_map)
         traj_by_ts = {ts: t_xyz for ts, t_xyz, _ in geom.trajectory}
         timings.append(_log_stage("geometry", t0, {"poses": len(geom.trajectory), **_memory_snapshot()}))
 
+        print(f"Run semantics")
         t0 = time.time()
         prompt_path = (config_path.parent / str(cfg.semantics["prompt_file"])).resolve()
         synonym_path = (config_path.parent / str(cfg.semantics["synonym_map"])).resolve()
