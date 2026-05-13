@@ -70,6 +70,7 @@ class BackboneFrameOutput:
 class BackboneOutput:
     frames: dict[tuple[int, int], BackboneFrameOutput]
     pairs: list[tuple[FrameRecord, FrameRecord]]
+    pairwise_outputs: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass

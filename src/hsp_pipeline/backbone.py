@@ -108,6 +108,20 @@ def _coerce_frame_output(frame: FrameRecord, rgb: np.ndarray, raw: Any) -> Backb
     return BackboneFrameOutput(frame=frame, rgb=rgb, features_v1=v1, features_v2=v2, pointmap=pointmap)
 
 
+def _extract_pair_outputs(raw_pair: Any) -> tuple[Any, Any, dict[str, Any] | None]:
+    if isinstance(raw_pair, tuple) and len(raw_pair) == 2:
+        return raw_pair[0], raw_pair[1], None
+    if isinstance(raw_pair, dict):
+        if "frame_i" in raw_pair and "frame_j" in raw_pair:
+            pair = {}
+            if "slam" in raw_pair:
+                pair["slam"] = raw_pair["slam"]
+            if "seg" in raw_pair:
+                pair["seg"] = raw_pair["seg"]
+            return raw_pair["frame_i"], raw_pair["frame_j"], (pair or None)
+    raise TypeError("Backbone adapter run_pair output must be (frame_i, frame_j) or dict with frame_i/frame_j")
+
+
 def _run_mast3r_backbone(frames: list[FrameRecord], cfg: BackboneConfig, checkpoints: dict[str, Any], device: str, fp16: bool) -> BackboneOutput:
     if not cfg.factory:
         raise RuntimeError(
@@ -117,11 +131,12 @@ def _run_mast3r_backbone(frames: list[FrameRecord], cfg: BackboneConfig, checkpo
     adapter = factory(checkpoints=checkpoints, device=device, fp16=fp16, config={"max_image_resolution": cfg.max_image_resolution})
     outputs: dict[tuple[int, int], BackboneFrameOutput] = {}
     pairs: list[tuple[FrameRecord, FrameRecord]] = []
+    pairwise_outputs: list[dict[str, Any]] = []
     for i in range(len(frames) - 1):
         fa, fb = frames[i], frames[i + 1]
         rgb_a = _load_rgb(fa.path, cfg.max_image_resolution)
         rgb_b = _load_rgb(fb.path, cfg.max_image_resolution)
-        raw_a, raw_b = adapter.run_pair(rgb_a, rgb_b)
+        raw_a, raw_b, pair_data = _extract_pair_outputs(adapter.run_pair(rgb_a, rgb_b))
         out_a = _coerce_frame_output(fa, rgb_a, raw_a)
         out_b = _coerce_frame_output(fb, rgb_b, raw_b)
         _validate_frame_output(fa, out_a)
@@ -129,6 +144,14 @@ def _run_mast3r_backbone(frames: list[FrameRecord], cfg: BackboneConfig, checkpo
         outputs[(fa.sec, fa.nsec)] = out_a
         outputs[(fb.sec, fb.nsec)] = out_b
         pairs.append((fa, fb))
+        if pair_data is not None:
+            pairwise_outputs.append(
+                {
+                    "frame_i": (fa.sec, fa.nsec),
+                    "frame_j": (fb.sec, fb.nsec),
+                    **pair_data,
+                }
+            )
     if len(frames) == 1:
         fr = frames[0]
         rgb = _load_rgb(fr.path, cfg.max_image_resolution)
@@ -136,7 +159,7 @@ def _run_mast3r_backbone(frames: list[FrameRecord], cfg: BackboneConfig, checkpo
         out = _coerce_frame_output(fr, rgb, raw)
         _validate_frame_output(fr, out)
         outputs[(fr.sec, fr.nsec)] = out
-    return BackboneOutput(frames=outputs, pairs=pairs)
+    return BackboneOutput(frames=outputs, pairs=pairs, pairwise_outputs=pairwise_outputs)
 
 
 def run_backbone(frames: list[FrameRecord], cfg: dict[str, Any], memory_cfg: dict[str, Any], checkpoints: dict[str, Any]) -> BackboneOutput:
