@@ -2,9 +2,9 @@ paths:
   input_dir: images
   output_dir: outputs
   checkpoints:
-    mast3r: /models/mast3r.ckpt
-    segmast3r_head: /models/segmast3r_head.ckpt
-    sam3: /models/sam3.pt
+    mast3r: checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth
+    segmast3r_head: checkpoints/segmast3r_spp.ckpt
+    sam3: checkpoints/sam3.pt
 
 keyframe:
   mode: fixed_frequency

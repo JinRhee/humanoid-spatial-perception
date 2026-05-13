@@ -217,6 +217,13 @@ def run_pipeline(images_dir: Path, config_path: Path, output_dir: Path, preset: 
         synonym_path = (config_path.parent / str(cfg.semantics["synonym_map"])).resolve()
         prompts = load_prompts(prompt_path, set(x.lower() for x in cfg.semantics.get("structural_labels", [])))
         synonyms = load_synonyms(synonym_path)
+        configured_checkpoints = cfg.paths.get("checkpoints", {})
+        sam3_checkpoint_cfg = configured_checkpoints.get("sam3")
+        sam3_checkpoint_path = None
+        if sam3_checkpoint_cfg:
+            candidate = (config_path.parent / str(sam3_checkpoint_cfg)).resolve()
+            if candidate.exists():
+                sam3_checkpoint_path = str(candidate)
         sem = run_semantics(
             selected,
             prompts,
@@ -226,6 +233,7 @@ def run_pipeline(images_dir: Path, config_path: Path, output_dir: Path, preset: 
             trajectory_by_ts=traj_by_ts,
             max_image_resolution=int(cfg.memory.get("max_image_resolution", 0)),
             max_masks_per_frame=int(cfg.memory.get("max_masks_per_frame", 0)),
+            sam3_checkpoint_path=sam3_checkpoint_path,
         )
         sanity_check_semantics(sem.object_segments, keyframe_count=len(selected))
         for fr in selected:

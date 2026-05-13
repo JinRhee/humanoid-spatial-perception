@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from PIL import Image
@@ -67,6 +68,69 @@ def _simple_prompt_masks(h: int, w: int, prompt_count: int) -> list[np.ndarray]:
     return masks
 
 
+def _build_sam3_processor(sam3_checkpoint_path: str | None, detection_conf_threshold: float) -> Any | None:
+    try:
+        import torch
+        from sam3.model.sam3_image_processor import Sam3Processor
+        from sam3.model_builder import build_sam3_image_model
+    except Exception:
+        return None
+
+    try:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model_kwargs: dict[str, Any] = {"device": device}
+        if sam3_checkpoint_path:
+            model_kwargs["checkpoint_path"] = sam3_checkpoint_path
+        model = build_sam3_image_model(**model_kwargs)
+        return Sam3Processor(model, device=device, confidence_threshold=float(detection_conf_threshold))
+    except Exception:
+        return None
+
+
+def _prompt_masks_with_sam3(
+    rgb_img: Image.Image,
+    prompts: list[PromptItem],
+    detection_conf_threshold: float,
+    sam3_checkpoint_path: str | None,
+) -> tuple[list[np.ndarray], list[float]]:
+    h, w = rgb_img.height, rgb_img.width
+    fallback_masks = _simple_prompt_masks(h, w, len(prompts))
+    fallback_scores = [float(mask.mean()) for mask in fallback_masks]
+
+    processor = _build_sam3_processor(sam3_checkpoint_path, detection_conf_threshold)
+    if processor is None:
+        return fallback_masks, fallback_scores
+
+    try:
+        state: dict[str, Any] = processor.set_image(rgb_img, state={})
+    except Exception:
+        return fallback_masks, fallback_scores
+
+    masks: list[np.ndarray] = []
+    scores: list[float] = []
+    for prompt in prompts:
+        try:
+            processor.reset_all_prompts(state)
+            state = processor.set_text_prompt(prompt.label, state)
+            pred_masks = state.get("masks")
+            pred_scores = state.get("scores")
+            if pred_masks is None or pred_scores is None or len(pred_scores) == 0:
+                masks.append(np.zeros((h, w), dtype=bool))
+                scores.append(0.0)
+                continue
+
+            best = int(pred_scores.argmax().item())
+            best_mask = pred_masks[best].detach().cpu().numpy().squeeze().astype(bool)
+            best_score = float(pred_scores[best].detach().cpu().item())
+            masks.append(best_mask)
+            scores.append(best_score)
+        except Exception:
+            masks.append(np.zeros((h, w), dtype=bool))
+            scores.append(0.0)
+
+    return masks, scores
+
+
 def _bbox_xyxy(mask: np.ndarray) -> list[int]:
     ys, xs = np.where(mask)
     if len(xs) == 0:
@@ -106,6 +170,7 @@ def run_semantics(
     trajectory_by_ts: dict[float, np.ndarray],
     max_image_resolution: int,
     max_masks_per_frame: int,
+    sam3_checkpoint_path: str | None = None,
 ) -> SemanticsResult:
     object_segments: list[SegmentRecord] = []
     structural_accum: list[np.ndarray] = []
@@ -123,13 +188,17 @@ def run_semantics(
             rgb = np.asarray(rgb_img, dtype=np.float32)
         h, w, _ = rgb.shape
         limited_prompts = prompts[:max_masks_per_frame] if max_masks_per_frame > 0 else prompts
-        masks = _simple_prompt_masks(h, w, len(limited_prompts))
+        masks, sam_scores = _prompt_masks_with_sam3(
+            rgb_img=rgb_img,
+            prompts=limited_prompts,
+            detection_conf_threshold=detection_conf_threshold,
+            sam3_checkpoint_path=sam3_checkpoint_path,
+        )
         pts3d, conf = _dense_points_and_conf(rgb)
         trans = trajectory_by_ts.get(fr.timestamp, np.zeros(3, dtype=np.float32))
 
         rows: list[dict] = []
-        for prompt, mask in zip(limited_prompts, masks):
-            sam_score = float(mask.mean())
+        for prompt, mask, sam_score in zip(limited_prompts, masks, sam_scores):
             if sam_score < detection_conf_threshold:
                 continue
 
