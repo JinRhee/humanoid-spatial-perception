@@ -79,7 +79,7 @@ The pipeline expects adapter factories for MASt3R backbone + SLAM, SAM3, and Seg
 `configs/pipeline.yaml` under `backbone.factory`, `slam.factory`, `sam3.factory`, and `segmast3r.factory`.
 The default config leaves the SLAM/SAM3/SegMASt3R factories unset, so fill them in when using those modes.
 
-`backbone.factory` defaults to `hsp_pipeline.backbone:create_mast3r_backbone`.
+`backbone.factory` is set to `hsp_pipeline.backbone:create_mast3r_backbone`.
 `backbone.model_factory` should point to the MASt3R model loader (`module:function`). The built-in
 `create_mast3r_backbone` adapter uses unified inference:
 - encode once per frame (cached on frame object),
