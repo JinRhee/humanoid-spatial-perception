@@ -101,7 +101,7 @@ class UnifiedMast3RBackboneAdapter:
 
 
 def create_mast3r_backbone(*_args: Any, **_kwargs: Any):
-    config = _kwargs.get("config") or {}
+    config = _kwargs.get("config", {})
     checkpoints = _kwargs.get("checkpoints", {})
     device = str(_kwargs.get("device", "cuda"))
     fp16 = bool(_kwargs.get("fp16", False))
