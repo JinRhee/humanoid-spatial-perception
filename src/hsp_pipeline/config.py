@@ -28,8 +28,24 @@ class PipelineConfig:
         return self.raw["geometry"]
 
     @property
+    def backbone(self) -> dict[str, Any]:
+        return self.raw["backbone"]
+
+    @property
+    def slam(self) -> dict[str, Any]:
+        return self.raw["slam"]
+
+    @property
     def semantics(self) -> dict[str, Any]:
         return self.raw["semantics"]
+
+    @property
+    def sam3(self) -> dict[str, Any]:
+        return self.raw["sam3"]
+
+    @property
+    def segmast3r(self) -> dict[str, Any]:
+        return self.raw["segmast3r"]
 
     @property
     def fusion(self) -> dict[str, Any]:
@@ -54,7 +70,19 @@ def load_config(config_path: Path, preset: str | None) -> PipelineConfig:
     with config_path.open("r", encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
 
-    required_top = {"paths", "keyframe", "geometry", "semantics", "fusion", "memory", "presets"}
+    required_top = {
+        "paths",
+        "keyframe",
+        "geometry",
+        "backbone",
+        "slam",
+        "semantics",
+        "sam3",
+        "segmast3r",
+        "fusion",
+        "memory",
+        "presets",
+    }
     missing = required_top.difference(raw)
     if missing:
         raise ValueError(f"Config missing top-level sections: {sorted(missing)}")

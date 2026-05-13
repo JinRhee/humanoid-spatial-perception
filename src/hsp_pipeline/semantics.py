@@ -6,10 +6,11 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import numpy as np
-from PIL import Image
 
+from .adapters import Sam3Adapter, Sam3MaskResult, SegMASt3RAdapter
 from .config import read_yaml_file
-from .types import FrameRecord, SegmentRecord
+from .spatial import transform_points
+from .types import BackboneOutput, FrameRecord, Mast3rFeaturesV1, Mast3rFeaturesV2, SegmentRecord
 
 logger = logging.getLogger(__name__)
 
@@ -65,181 +66,84 @@ def canonicalize(label: str, synonym_map: dict[str, str]) -> str:
     return synonym_map.get(key, key)
 
 
-def _simple_prompt_masks(h: int, w: int, prompt_count: int) -> list[np.ndarray]:
-    masks: list[np.ndarray] = []
-    stripe_w = max(1, w // max(prompt_count, 1))
-    for i in range(prompt_count):
-        x0 = i * stripe_w
-        x1 = w if i == prompt_count - 1 else min(w, (i + 1) * stripe_w)
-        mask = np.zeros((h, w), dtype=bool)
-        mask[:, x0:x1] = True
-        masks.append(mask)
-    return masks
-
-
-def _build_sam3_processor(
-    sam3_checkpoint_path: str | None, detection_conf_threshold: float
-) -> Sam3ProcessorProtocol | None:
-    try:
-        import torch
-        from sam3.model.sam3_image_processor import Sam3Processor
-        from sam3.model_builder import build_sam3_image_model
-    except (ImportError, ModuleNotFoundError):
-        return None
-
-    try:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        model_kwargs: dict[str, Any] = {"device": device}
-        if sam3_checkpoint_path:
-            model_kwargs["checkpoint_path"] = sam3_checkpoint_path
-        model = build_sam3_image_model(**model_kwargs)
-        return Sam3Processor(model, device=device, confidence_threshold=float(detection_conf_threshold))
-    except (RuntimeError, OSError, ValueError, FileNotFoundError) as exc:
-        logger.debug("SAM3 initialization failed; falling back to simple masks: %s", exc)
-        return None
-
-
-def _prompt_masks_with_sam3(
-    rgb_img: Image.Image,
-    prompts: list[PromptItem],
-    detection_conf_threshold: float,
-    sam3_checkpoint_path: str | None,
-) -> tuple[list[np.ndarray], list[float]]:
-    h, w = rgb_img.height, rgb_img.width
-    fallback_masks = _simple_prompt_masks(h, w, len(prompts))
-    fallback_scores = [float(mask.mean()) for mask in fallback_masks]
-
-    processor = _build_sam3_processor(sam3_checkpoint_path, detection_conf_threshold)
-    if processor is None:
-        return fallback_masks, fallback_scores
-
-    try:
-        state: dict[str, Any] = processor.set_image(rgb_img, state=None)
-    except (RuntimeError, ValueError, TypeError) as exc:
-        logger.debug("SAM3 set_image failed; falling back to simple masks: %s", exc)
-        return fallback_masks, fallback_scores
-
-    masks: list[np.ndarray] = []
-    scores: list[float] = []
-    for prompt in prompts:
-        try:
-            processor.reset_all_prompts(state)
-            state = processor.set_text_prompt(prompt.label, state)
-            pred_masks = state.get("masks")
-            pred_scores = state.get("scores")
-            if pred_masks is None or pred_scores is None or len(pred_scores) == 0:
-                masks.append(np.zeros((h, w), dtype=bool))
-                scores.append(0.0)
-                continue
-
-            scores_np = np.asarray(pred_scores.detach().cpu())
-            if scores_np.size == 0:
-                masks.append(np.zeros((h, w), dtype=bool))
-                scores.append(0.0)
-                continue
-
-            best = int(scores_np.argmax())
-            best_mask = pred_masks[best].detach().cpu().numpy().squeeze()
-            if best_mask.shape != (h, w):
-                masks.append(np.zeros((h, w), dtype=bool))
-                scores.append(0.0)
-                continue
-
-            best_mask = best_mask.astype(bool)
-            best_score = float(pred_scores[best].detach().cpu().item())
-            masks.append(best_mask)
-            scores.append(best_score)
-        except (RuntimeError, ValueError, TypeError, AttributeError, KeyError) as exc:
-            logger.debug("SAM3 prompt inference failed for '%s': %s", prompt.label, exc)
-            masks.append(np.zeros((h, w), dtype=bool))
-            scores.append(0.0)
-
-    return masks, scores
-
-
 def _bbox_xyxy(mask: np.ndarray) -> list[int]:
     ys, xs = np.where(mask)
     if len(xs) == 0:
         return [0, 0, 0, 0]
     return [int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())]
 
+def _select_features(
+    frame_out,
+    version: str,
+) -> Mast3rFeaturesV1 | Mast3rFeaturesV2:
+    if version == "v1":
+        return frame_out.features_v1
+    if version == "v2":
+        return frame_out.features_v2
+    raise ValueError(f"Unknown SegMASt3R feature version '{version}'")
 
-def _dense_points_and_conf(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    h, w, _ = rgb.shape
-    yy, xx = np.mgrid[0:h, 0:w]
-    z = (rgb.mean(axis=2) / 255.0) * 2.0 + 0.5
-    x = (xx - (w / 2.0)) / max(w, 1)
-    y = (yy - (h / 2.0)) / max(h, 1)
-    pts3d = np.stack([x, y, z], axis=-1).astype(np.float32)
-    conf = np.clip(1.0 - np.abs(z - z.mean()) / (z.std() + 1e-6), 0.0, 1.0).astype(np.float32)
-    return pts3d, conf
 
-
-def _descriptor_from_mask(rgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
-    pix = rgb[mask]
-    if pix.size == 0:
-        return np.ones((24,), dtype=np.float32) * 1e-6
-    mean_rgb = pix.mean(axis=0) / 255.0
-    std_rgb = pix.std(axis=0) / 255.0
-    v = np.concatenate([mean_rgb, std_rgb, [pix.shape[0] / (rgb.shape[0] * rgb.shape[1] + 1e-9)]])
-    rep = np.tile(v, 4)[:24].astype(np.float32)
-    norm = np.linalg.norm(rep) + 1e-9
-    return rep / norm
+def _mask_to_points_and_conf(frame_out, mask: np.ndarray, conf_min: float) -> tuple[np.ndarray, np.ndarray]:
+    if mask.shape != frame_out.pointmap.confidence.shape:
+        raise ValueError("SAM3 mask shape does not match pointmap resolution")
+    conf = frame_out.pointmap.confidence[mask]
+    pts = frame_out.pointmap.points[mask]
+    good = conf >= conf_min
+    return pts[good], conf[good]
 
 
 def run_semantics(
     frames: list[FrameRecord],
+    backbone: BackboneOutput,
     prompts: list[PromptItem],
     synonym_map: dict[str, str],
     conf_min: float,
     detection_conf_threshold: float,
-    trajectory_by_ts: dict[float, np.ndarray],
-    max_image_resolution: int,
+    pose_matrices: dict[float, np.ndarray],
     max_masks_per_frame: int,
-    sam3_checkpoint_path: str | None = None,
+    sam3_cfg: dict[str, Any],
+    segmast3r_cfg: dict[str, Any],
+    checkpoints: dict[str, Any],
 ) -> SemanticsResult:
     object_segments: list[SegmentRecord] = []
     structural_accum: list[np.ndarray] = []
     per_frame_rows: dict[tuple[int, int], list[dict]] = {}
 
+    sam3 = Sam3Adapter(sam3_cfg, checkpoints=checkpoints)
+    segmast3r = SegMASt3RAdapter(segmast3r_cfg, checkpoints=checkpoints)
+    feature_version = str(segmast3r_cfg.get("feature_version", "v2"))
+
     for fr in frames:
-        with Image.open(fr.path) as im:
-            rgb_img = im.convert("RGB")
-            if max_image_resolution and max_image_resolution > 0:
-                w0, h0 = rgb_img.size
-                long_edge = max(w0, h0)
-                if long_edge > max_image_resolution:
-                    scale = max_image_resolution / long_edge
-                    rgb_img = rgb_img.resize((int(w0 * scale), int(h0 * scale)))
-            rgb = np.asarray(rgb_img, dtype=np.float32)
-        h, w, _ = rgb.shape
+        frame_out = backbone.frames.get((fr.sec, fr.nsec))
+        if frame_out is None:
+            raise RuntimeError(f"Missing backbone output for frame {fr.path}")
+        rgb = frame_out.rgb
         limited_prompts = prompts[:max_masks_per_frame] if max_masks_per_frame > 0 else prompts
-        masks, sam_scores = _prompt_masks_with_sam3(
-            rgb_img=rgb_img,
-            prompts=limited_prompts,
-            detection_conf_threshold=detection_conf_threshold,
-            sam3_checkpoint_path=sam3_checkpoint_path,
-        )
-        pts3d, conf = _dense_points_and_conf(rgb)
-        trans = trajectory_by_ts.get(fr.timestamp, np.zeros(3, dtype=np.float32))
+        labels = [p.label for p in limited_prompts]
+        masks = sam3.predict(rgb, labels, max_masks_per_frame)
+        pose = pose_matrices.get(fr.timestamp)
+        if pose is None:
+            raise RuntimeError(f"Missing pose for frame {fr.path}")
+        features = _select_features(frame_out, feature_version)
 
         rows: list[dict] = []
-        for prompt, mask, sam_score in zip(limited_prompts, masks, sam_scores):
+        for prompt, mask_result in zip(limited_prompts, masks):
+            if isinstance(mask_result, Sam3MaskResult):
+                mask = mask_result.mask
+                sam_score = float(mask_result.score)
+            else:
+                mask = mask_result
+                sam_score = float(mask.mean())
             if sam_score < detection_conf_threshold:
                 continue
 
             canonical = canonicalize(prompt.label, synonym_map)
-            descriptor = _descriptor_from_mask(rgb, mask)
-
-            sel_conf = conf[mask]
-            good = sel_conf >= conf_min
-            sel_pts = pts3d[mask][good]
-            sel_conf = sel_conf[good]
-
+            descriptor = segmast3r.encode_mask(features, mask)
+            sel_pts, sel_conf = _mask_to_points_and_conf(frame_out, mask, conf_min)
             if sel_pts.size == 0:
                 continue
 
-            global_pts = sel_pts + trans[None, :]
+            global_pts = transform_points(sel_pts, pose)
             centroid = global_pts.mean(axis=0)
             bmin = global_pts.min(axis=0)
             bmax = global_pts.max(axis=0)
@@ -250,6 +154,7 @@ def run_semantics(
                 "canonical_label": canonical,
                 "sam3_score": sam_score,
                 "descriptor": descriptor.tolist(),
+                "point_confidence_mean": float(sel_conf.mean()) if sel_conf.size > 0 else 0.0,
                 "num_points": int(global_pts.shape[0]),
                 "centroid_xyz": centroid.tolist(),
                 "bbox_min": bmin.tolist(),
@@ -287,12 +192,21 @@ def run_semantics(
     return SemanticsResult(object_segments=object_segments, structural_points=structural_points, per_frame_rows=per_frame_rows)
 
 
-def sanity_check_semantics(segments: list[SegmentRecord], keyframe_count: int) -> None:
+def sanity_check_semantics(segments: list[SegmentRecord], keyframe_count: int, max_masks_per_frame: int) -> None:
     if keyframe_count == 0:
         return
-    avg = len(segments) / keyframe_count
-    if avg < 1.0:
-        raise RuntimeError("Sanity check failed: fewer than one lifted segment per keyframe on average")
+    if max_masks_per_frame > 0:
+        max_expected = keyframe_count * max_masks_per_frame
+        if len(segments) > max_expected:
+            raise RuntimeError("Sanity check failed: segment count exceeds max masks per frame")
+    if not segments:
+        print("[warn] No object segments produced; check prompts or SAM3 thresholds.")
     for seg in segments:
-        if np.allclose(seg.descriptor, 0.0):
-            raise RuntimeError("Sanity check failed: found all-zero descriptor")
+        if not np.all(np.isfinite(seg.descriptor)) or np.linalg.norm(seg.descriptor) < 1e-9:
+            raise RuntimeError("Sanity check failed: found invalid or near-zero descriptor")
+        if seg.points_3d.size == 0:
+            raise RuntimeError("Sanity check failed: segment has zero points")
+        if seg.mast3r_conf.size and (np.any(seg.mast3r_conf < 0.0) or np.any(seg.mast3r_conf > 1.0)):
+            raise RuntimeError("Sanity check failed: point confidence out of range")
+        if not (0.0 <= seg.sam3_score <= 1.0):
+            raise RuntimeError("Sanity check failed: SAM3 score out of range")
