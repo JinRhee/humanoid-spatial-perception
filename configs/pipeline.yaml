@@ -9,7 +9,7 @@ paths:
     sam3: checkpoints/sam3.pt
 
 keyframe:
-  mode: fixed_frequency
+  mode: all_frames
   target_hz: 5.0
 
 geometry:
@@ -30,10 +30,10 @@ slam:
   factory: hsp_pipeline.external_adapters:create_mast3r_slam
 
 semantics:
-  prompt_file: configs/prompts.txt
+  prompt_file: prompts.txt
   detection_conf_threshold: 0.01
   point_conf_min: 0.10
-  synonym_map: configs/synonyms.yaml
+  synonym_map: synonyms.yaml
   structural_labels: [wall, floor, ceiling]
 
 sam3:
