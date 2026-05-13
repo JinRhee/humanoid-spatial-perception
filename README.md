@@ -50,9 +50,9 @@ cd ..
 Download checkpoints for MASt3R
 ```bash
 mkdir -p checkpoints/
-wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth -P checkpoints/
-wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth -P checkpoints/
-wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_codebook.pkl -P checkpoints/
+wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth -O checkpoints/mast3r_v1.pth
+wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth -O checkpoints/mast3r_v2.pth
+wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_codebook.pkl -O checkpoints/mast3r_codebook.pkl
 ```
 
 ### Install SegMASt3R
@@ -72,3 +72,17 @@ Optional dependencies for faster inference
 pip install einops ninja && pip install flash-attn-3 --no-deps --index-url https://download.pytorch.org/whl/cu128
 pip install git+https://github.com/ronghanghu/cc_torch.git
 ```
+
+## Adapter configuration
+
+The pipeline expects adapter factories for MASt3R backbone + SLAM, SAM3, and SegMASt3R. These are configured in
+`configs/pipeline.yaml` under `backbone.factory`, `slam.factory`, `sam3.factory`, and `segmast3r.factory`.
+
+If you install custom wrappers, set the factories to `module:function` callables that return adapters with:
+- MASt3R backbone: `run_pair(image_a, image_b)` and `run_single(image)` returning pointmaps + feature grids.
+- MASt3R-SLAM: `run(frames, backbone)` returning a trajectory and optional global map.
+- SAM3: `predict(image, prompts, max_masks)` returning masks + scores.
+- SegMASt3R: `encode_mask(features, mask)` returning a descriptor.
+
+For smoke testing without external dependencies, set `backbone.mode: stub`, `slam.mode: stub`, `sam3.mode: stub`,
+and `segmast3r.mode: stub` in the config.

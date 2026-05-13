@@ -32,6 +32,46 @@ class SegmentRecord:
     is_structural: bool = False
 
 
+@dataclass(frozen=True)
+class Mast3rFeaturesV1:
+    grid: np.ndarray
+    confidence: np.ndarray
+
+
+@dataclass(frozen=True)
+class Mast3rFeaturesV2:
+    grid: np.ndarray
+    confidence: np.ndarray
+
+
+@dataclass(frozen=True)
+class PointMap:
+    points: np.ndarray
+    confidence: np.ndarray
+
+
+@dataclass(frozen=True)
+class PoseEstimate:
+    timestamp: float
+    translation: np.ndarray
+    quaternion_xyzw: np.ndarray
+
+
+@dataclass(frozen=True)
+class BackboneFrameOutput:
+    frame: FrameRecord
+    rgb: np.ndarray
+    features_v1: Mast3rFeaturesV1
+    features_v2: Mast3rFeaturesV2
+    pointmap: PointMap
+
+
+@dataclass
+class BackboneOutput:
+    frames: dict[tuple[int, int], BackboneFrameOutput]
+    pairs: list[tuple[FrameRecord, FrameRecord]]
+
+
 @dataclass
 class RunningStats:
     count: int = 0

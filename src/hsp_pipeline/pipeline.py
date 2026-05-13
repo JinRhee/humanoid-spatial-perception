@@ -11,6 +11,7 @@ from typing import Any
 
 import numpy as np
 
+from .backbone import run_backbone
 from .config import PipelineConfig, dump_yaml_file, load_config
 from .geometry import run_geometry, sanity_check_geometry
 from .ingest import load_frames
@@ -199,8 +200,25 @@ def run_pipeline(images_dir: Path, config_path: Path, output_dir: Path, preset: 
         )
 
         t0 = time.time()
-        geom = run_geometry(selected, cfg.geometry)
-        sanity_check_geometry(geom.trajectory, geom.pointclouds)
+        checkpoints = cfg.paths.get("checkpoints", {})
+        backbone = run_backbone(selected, cfg.backbone, cfg.memory, checkpoints=checkpoints)
+        if backbone.frames:
+            first_frame = next(iter(backbone.frames.values()))
+            pointmap_shape = tuple(first_frame.pointmap.points.shape[:2])
+        else:
+            pointmap_shape = None
+        timings.append(
+            _log_stage(
+                "backbone",
+                t0,
+                {"frames": len(backbone.frames), "pairs": len(backbone.pairs), **_memory_snapshot()},
+            )
+        )
+
+        t0 = time.time()
+        slam_cfg = {**cfg.geometry, **cfg.slam}
+        geom = run_geometry(selected, backbone, cfg.geometry, slam_cfg)
+        sanity_check_geometry(geom.trajectory, geom.pointclouds, geom.pointmaps)
         write_tum_trajectory(output_dir / "trajectory_tum.txt", geom.trajectory)
         pcd_dir = output_dir / "pointclouds"
         ensure_dir(pcd_dir)
@@ -209,7 +227,6 @@ def run_pipeline(images_dir: Path, config_path: Path, output_dir: Path, preset: 
             write_pcd_xyz(pcd_dir / f"pointcloud_{fr.sec}_{fr.nsec}.pcd", pc)
             last_successful_frame = f"{fr.sec}_{fr.nsec}"
         write_pcd_xyz(output_dir / "map_final.pcd", geom.global_map)
-        traj_by_ts = {ts: t_xyz for ts, t_xyz, _ in geom.trajectory}
         timings.append(_log_stage("geometry", t0, {"poses": len(geom.trajectory), **_memory_snapshot()}))
 
         t0 = time.time()
@@ -219,15 +236,22 @@ def run_pipeline(images_dir: Path, config_path: Path, output_dir: Path, preset: 
         synonyms = load_synonyms(synonym_path)
         sem = run_semantics(
             selected,
+            backbone,
             prompts,
             synonyms,
             conf_min=float(cfg.semantics.get("point_conf_min", 0.1)),
             detection_conf_threshold=float(cfg.semantics.get("detection_conf_threshold", 0.01)),
-            trajectory_by_ts=traj_by_ts,
-            max_image_resolution=int(cfg.memory.get("max_image_resolution", 0)),
+            pose_matrices=geom.pose_matrices,
+            max_masks_per_frame=int(cfg.memory.get("max_masks_per_frame", 0)),
+            sam3_cfg=cfg.sam3,
+            segmast3r_cfg=cfg.segmast3r,
+            checkpoints=checkpoints,
+        )
+        sanity_check_semantics(
+            sem.object_segments,
+            keyframe_count=len(selected),
             max_masks_per_frame=int(cfg.memory.get("max_masks_per_frame", 0)),
         )
-        sanity_check_semantics(sem.object_segments, keyframe_count=len(selected))
         for fr in selected:
             rows = sem.per_frame_rows.get((fr.sec, fr.nsec), [])
             write_jsonl(output_dir / f"segments_{fr.sec}_{fr.nsec}.jsonl", rows)
@@ -298,7 +322,6 @@ def run_pipeline(images_dir: Path, config_path: Path, output_dir: Path, preset: 
             "external/segmast3r": _git_submodule_hash(repo_root, "external/segmast3r"),
             "external/sam3": _git_submodule_hash(repo_root, "external/sam3"),
         }
-        checkpoints = cfg.paths.get("checkpoints", {})
         checkpoint_info = {
             name: {
                 "path": p,
@@ -320,6 +343,9 @@ def run_pipeline(images_dir: Path, config_path: Path, output_dir: Path, preset: 
             "effective_keyframe_hz": kstats.effective_hz,
             "total_frames_ingested": len(frames),
             "total_keyframes_selected": len(selected),
+            "total_backbone_frames": len(backbone.frames),
+            "total_backbone_pairs": len(backbone.pairs),
+            "pointmap_resolution": pointmap_shape,
             "total_instances_final": len(keep),
             "total_instances_low_confidence": len(low),
             "stage_timings_seconds": [{"stage": t.name, "seconds": t.seconds} for t in timings],
