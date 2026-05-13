@@ -38,33 +38,37 @@ conda activate hsp
 pip install torch==2.10.0 torchvision --index-url https://download.pytorch.org/whl/cu128
 ```
 
+### Install MASt3R-SLAM
 ```bash
 cd external/MASt3R-SLAM
-pip install --no-build-isolation -e thirdparty/mast3r
+pip install --no-build-isolation -e thirdparty/mast3r "numpy==1.26.4" # Without numpy version pin, latest numpy will be used causing a recompilation of MASt3R-SLAM
 pip install --no-build-isolation -e thirdparty/in3d    # Might need to downgrade cython via $ pip install "cython<3.0"
 pip install --no-build-isolation -e .
 cd ..
-
-cd SegMASt3R
-pip install -r mast3r_src/dust3r/requirements.txt
-pip install -e .
-cd ..
-
-
-cd sam3
-pip install -e .
-cd ../..
-
-
 ```
 
+Download checkpoints for MASt3R
 ```bash
 mkdir -p checkpoints/
 wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth -P checkpoints/
 wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth -P checkpoints/
 wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_codebook.pkl -P checkpoints/
+```
 
+### Install SegMASt3R
+```bash
+mkdir -p checkpoints
 wget https://huggingface.co/rjayanti/segmast3r/resolve/main/segmast3r_spp.ckpt -O checkpoints/segmast3r_spp.ckpt
+```
 
-
+### Install SAM3
+```bash
+cd sam3
+pip install -e .
+cd ../..
+```
+Optional dependencies for faster inference
+```bash
+pip install einops ninja && pip install flash-attn-3 --no-deps --index-url https://download.pytorch.org/whl/cu128
+pip install git+https://github.com/ronghanghu/cc_torch.git
 ```
