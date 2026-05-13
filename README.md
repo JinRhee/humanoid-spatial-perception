@@ -27,3 +27,44 @@ It requires `ffmpeg` and `ffprobe` to be available on `PATH`.
   --output_dir /absolute/path/to/output \
   --preset balanced
 ```
+
+## Installation
+```bash
+git submodule update --init --recursive
+
+conda create -n hsp python=3.12 cmake=3.14.0
+conda activate hsp
+
+pip install torch==2.10.0 torchvision --index-url https://download.pytorch.org/whl/cu128
+```
+
+```bash
+cd external/MASt3R-SLAM
+pip install --no-build-isolation -e thirdparty/mast3r
+pip install --no-build-isolation -e thirdparty/in3d    # Might need to downgrade cython via $ pip install "cython<3.0"
+pip install --no-build-isolation -e .
+cd ..
+
+cd SegMASt3R
+pip install -r mast3r_src/dust3r/requirements.txt
+pip install -e .
+cd ..
+
+
+cd sam3
+pip install -e .
+cd ../..
+
+
+```
+
+```bash
+mkdir -p checkpoints/
+wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth -P checkpoints/
+wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth -P checkpoints/
+wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_codebook.pkl -P checkpoints/
+
+wget https://huggingface.co/rjayanti/segmast3r/resolve/main/segmast3r_spp.ckpt -O checkpoints/segmast3r_spp.ckpt
+
+
+```
