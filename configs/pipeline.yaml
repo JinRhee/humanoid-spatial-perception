@@ -19,7 +19,7 @@ geometry:
 
 backbone:
   mode: mast3r
-  factory: hsp_pipeline.external_adapters:create_mast3r_backbone
+  factory: hsp_pipeline.backbone:create_mast3r_backbone
   model_factory: null
   max_image_resolution: 0
   device: cuda
@@ -27,7 +27,7 @@ backbone:
 
 slam:
   mode: mast3r_slam
-  factory: hsp_pipeline.external_adapters:create_mast3r_slam
+  factory: null
 
 semantics:
   prompt_file: prompts.txt
@@ -38,12 +38,12 @@ semantics:
 
 sam3:
   mode: sam3
-  factory: hsp_pipeline.external_adapters:create_sam3
+  factory: null
   checkpoint_key: sam3
 
 segmast3r:
   mode: segmast3r
-  factory: hsp_pipeline.external_adapters:create_segmast3r
+  factory: null
   checkpoint_key: segmast3r_head
   feature_version: v2
   descriptor_dim: 24

@@ -77,14 +77,16 @@ pip install git+https://github.com/ronghanghu/cc_torch.git
 
 The pipeline expects adapter factories for MASt3R backbone + SLAM, SAM3, and SegMASt3R. These are configured in
 `configs/pipeline.yaml` under `backbone.factory`, `slam.factory`, `sam3.factory`, and `segmast3r.factory`.
+The default config leaves the SLAM/SAM3/SegMASt3R factories unset, so fill them in when using those modes.
 
+`backbone.factory` defaults to `hsp_pipeline.backbone:create_mast3r_backbone`.
 `backbone.model_factory` should point to the MASt3R model loader (`module:function`). The built-in
 `create_mast3r_backbone` adapter uses unified inference:
 - encode once per frame (cached on frame object),
 - symmetric decode (i→j and j→i),
 - branch outputs into SLAM tensors `(X, C, D, Q)` and SegMASt3R descriptors `(desc_i, desc_j)`.
 
-If you install custom wrappers, set the factories to `module:function` callables that return adapters with:
+Set `slam.factory`, `sam3.factory`, and `segmast3r.factory` to `module:function` callables that return adapters with:
 - MASt3R backbone: `run_pair(image_a, image_b)` and `run_single(image)` returning pointmaps + feature grids.
 - MASt3R-SLAM: `run(frames, backbone)` returning a trajectory and optional global map.
 - SAM3: `predict(image, prompts, max_masks)` returning masks + scores.
