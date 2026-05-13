@@ -59,7 +59,10 @@ def _coerce_slam_result(raw: Any) -> SlamResult:
         raise TypeError("SLAM adapter must return dict or SlamResult")
     trajectory = raw["trajectory"]
     pose_mats = raw.get("pose_matrices") or _build_pose_matrices(trajectory)
-    global_map = np.asarray(raw.get("global_map", np.zeros((0, 3), dtype=np.float32)), dtype=np.float32)
+    if "global_map" in raw:
+        global_map = np.asarray(raw["global_map"], dtype=np.float32)
+    else:
+        global_map = np.zeros((0, 3), dtype=np.float32)
     return SlamResult(trajectory=trajectory, pose_matrices=pose_mats, global_map=global_map)
 
 

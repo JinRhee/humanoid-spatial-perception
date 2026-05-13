@@ -14,6 +14,7 @@ from .types import (
     FrameRecord,
     Mast3rFeaturesV1,
     Mast3rFeaturesV2,
+    PairwiseBackboneOutput,
     PointMap,
 )
 
@@ -131,7 +132,7 @@ def _run_mast3r_backbone(frames: list[FrameRecord], cfg: BackboneConfig, checkpo
     adapter = factory(checkpoints=checkpoints, device=device, fp16=fp16, config={"max_image_resolution": cfg.max_image_resolution})
     outputs: dict[tuple[int, int], BackboneFrameOutput] = {}
     pairs: list[tuple[FrameRecord, FrameRecord]] = []
-    pairwise_outputs: list[dict[str, Any]] = []
+    pairwise_outputs: list[PairwiseBackboneOutput] = []
     for i in range(len(frames) - 1):
         fa, fb = frames[i], frames[i + 1]
         rgb_a = _load_rgb(fa.path, cfg.max_image_resolution)
@@ -146,11 +147,12 @@ def _run_mast3r_backbone(frames: list[FrameRecord], cfg: BackboneConfig, checkpo
         pairs.append((fa, fb))
         if pair_data is not None:
             pairwise_outputs.append(
-                {
-                    "frame_i": (fa.sec, fa.nsec),
-                    "frame_j": (fb.sec, fb.nsec),
-                    **pair_data,
-                }
+                PairwiseBackboneOutput(
+                    frame_i=(fa.sec, fa.nsec),
+                    frame_j=(fb.sec, fb.nsec),
+                    slam=dict(pair_data.get("slam", {})),
+                    seg=dict(pair_data.get("seg", {})),
+                )
             )
     if len(frames) == 1:
         fr = frames[0]
@@ -164,7 +166,10 @@ def _run_mast3r_backbone(frames: list[FrameRecord], cfg: BackboneConfig, checkpo
 
 def run_backbone(frames: list[FrameRecord], cfg: dict[str, Any], memory_cfg: dict[str, Any], checkpoints: dict[str, Any]) -> BackboneOutput:
     mode = str(cfg.get("mode", "mast3r"))
-    max_res = int(cfg.get("max_image_resolution", 0) or memory_cfg.get("max_image_resolution", 0) or 0)
+    cfg_max_res = cfg.get("max_image_resolution")
+    if cfg_max_res is None:
+        cfg_max_res = memory_cfg.get("max_image_resolution")
+    max_res = int(cfg_max_res) if cfg_max_res is not None else 0
     factory = cfg.get("factory")
     device = str(cfg.get("device", memory_cfg.get("device", "cuda")))
     fp16 = bool(cfg.get("fp16", memory_cfg.get("fp16", False)))

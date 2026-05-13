@@ -66,11 +66,19 @@ class BackboneFrameOutput:
     pointmap: PointMap
 
 
+@dataclass(frozen=True)
+class PairwiseBackboneOutput:
+    frame_i: tuple[int, int]
+    frame_j: tuple[int, int]
+    slam: dict[str, np.ndarray] = field(default_factory=dict)
+    seg: dict[str, np.ndarray] = field(default_factory=dict)
+
+
 @dataclass
 class BackboneOutput:
     frames: dict[tuple[int, int], BackboneFrameOutput]
     pairs: list[tuple[FrameRecord, FrameRecord]]
-    pairwise_outputs: list[dict[str, Any]] = field(default_factory=list)
+    pairwise_outputs: list[PairwiseBackboneOutput] = field(default_factory=list)
 
 
 @dataclass

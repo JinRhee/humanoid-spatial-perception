@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -15,8 +15,8 @@ class GeometryOutputs:
     pointclouds: dict[tuple[int, int], np.ndarray]
     global_map: np.ndarray
 
-    pointmaps: dict[tuple[int, int], PointMap] = None
-    pose_matrices: dict[float, np.ndarray] = None
+    pointmaps: dict[tuple[int, int], PointMap] = field(default_factory=dict)
+    pose_matrices: dict[float, np.ndarray] = field(default_factory=dict)
 
 
 def _pointmap_points(pointmap: PointMap) -> np.ndarray:
@@ -26,10 +26,7 @@ def _pointmap_points(pointmap: PointMap) -> np.ndarray:
 
 def run_geometry(frames: list[FrameRecord], backbone: BackboneOutput, geom_cfg: dict, slam_cfg: dict) -> GeometryOutputs:
     if not frames:
-        empty = GeometryOutputs([], {}, np.zeros((0, 3), dtype=np.float32))
-        empty.pointmaps = {}
-        empty.pose_matrices = {}
-        return empty
+        return GeometryOutputs([], {}, np.zeros((0, 3), dtype=np.float32))
 
     slam = run_slam(frames, backbone, slam_cfg)
     pointclouds: dict[tuple[int, int], np.ndarray] = {}

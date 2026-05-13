@@ -20,7 +20,7 @@ geometry:
 backbone:
   mode: mast3r
   factory: hsp_pipeline.external_adapters:create_mast3r_backbone
-  model_factory: ""
+  model_factory: null
   max_image_resolution: 0
   device: cuda
   fp16: true

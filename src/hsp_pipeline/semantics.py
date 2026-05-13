@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy as np
 
-from .adapters import Sam3Adapter, Sam3MaskResult, SegMast3rAdapter
+from .adapters import Sam3Adapter, Sam3MaskResult, SegMASt3RAdapter
 from .config import read_yaml_file
 from .spatial import transform_points
 from .types import BackboneOutput, FrameRecord, Mast3rFeaturesV1, Mast3rFeaturesV2, SegmentRecord
@@ -101,7 +101,7 @@ def run_semantics(
     per_frame_rows: dict[tuple[int, int], list[dict]] = {}
 
     sam3 = Sam3Adapter(sam3_cfg, checkpoints=checkpoints)
-    segmast3r = SegMast3rAdapter(segmast3r_cfg, checkpoints=checkpoints)
+    segmast3r = SegMASt3RAdapter(segmast3r_cfg, checkpoints=checkpoints)
     feature_version = str(segmast3r_cfg.get("feature_version", "v2"))
 
     for fr in frames:
@@ -145,7 +145,7 @@ def run_semantics(
                 "canonical_label": canonical,
                 "sam3_score": sam_score,
                 "descriptor": descriptor.tolist(),
-                "point_confidence_mean": float(sel_conf.mean()) if sel_conf.size else 0.0,
+                "point_confidence_mean": float(sel_conf.mean()) if sel_conf.size > 0 else 0.0,
                 "num_points": int(global_pts.shape[0]),
                 "centroid_xyz": centroid.tolist(),
                 "bbox_min": bmin.tolist(),
@@ -194,7 +194,7 @@ def sanity_check_semantics(segments: list[SegmentRecord], keyframe_count: int, m
         print("[warn] No object segments produced; check prompts or SAM3 thresholds.")
     for seg in segments:
         if not np.all(np.isfinite(seg.descriptor)) or np.linalg.norm(seg.descriptor) < 1e-9:
-            raise RuntimeError("Sanity check failed: found all-zero descriptor")
+            raise RuntimeError("Sanity check failed: found invalid or near-zero descriptor")
         if seg.points_3d.size == 0:
             raise RuntimeError("Sanity check failed: segment has zero points")
         if seg.mast3r_conf.size and (np.any(seg.mast3r_conf < 0.0) or np.any(seg.mast3r_conf > 1.0)):

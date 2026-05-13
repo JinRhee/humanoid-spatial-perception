@@ -1,21 +1,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import torch
 
 
 @dataclass(frozen=True)
 class UnifiedInferenceResult:
-    X: Any
-    C: Any
-    D: Any
-    Q: Any
-    desc_i: Any
-    desc_j: Any
-    res11: dict[str, Any]
-    res21: dict[str, Any]
-    res22: dict[str, Any]
-    res12: dict[str, Any]
+    X: "torch.Tensor"
+    C: "torch.Tensor"
+    D: "torch.Tensor"
+    Q: "torch.Tensor"
+    desc_i: "torch.Tensor"
+    desc_j: "torch.Tensor"
+    res11: dict[str, "torch.Tensor"]
+    res21: dict[str, "torch.Tensor"]
+    res22: dict[str, "torch.Tensor"]
+    res12: dict[str, "torch.Tensor"]
 
 
 def _ensure_encoded(model: Any, frame: Any) -> None:

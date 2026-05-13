@@ -89,7 +89,7 @@ class Sam3Adapter:
         return results
 
 
-class SegMast3rAdapter:
+class SegMASt3RAdapter:
     def __init__(self, cfg: dict[str, Any], checkpoints: dict[str, Any]) -> None:
         self.mode = str(cfg.get("mode", "segmast3r"))
         self.factory = cfg.get("factory")
@@ -114,5 +114,10 @@ class SegMast3rAdapter:
         feats = features.grid
         if feats.shape[:2] != mask.shape:
             raise ValueError("SegMASt3R stub expects mask and features grid to match")
+        if feats.ndim != 3:
+            raise ValueError("SegMASt3R stub expects features grid shape (H, W, C)")
         vec = feats[mask].mean(axis=0) if np.any(mask) else np.zeros((feats.shape[2],), dtype=np.float32)
         return _resample_descriptor(vec, self.descriptor_dim)
+
+
+SegMast3rAdapter = SegMASt3RAdapter
