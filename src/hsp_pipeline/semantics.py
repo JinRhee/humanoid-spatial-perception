@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import numpy as np
 
@@ -10,6 +11,14 @@ from .adapters import Sam3Adapter, Sam3MaskResult, SegMASt3RAdapter
 from .config import read_yaml_file
 from .spatial import transform_points
 from .types import BackboneOutput, FrameRecord, Mast3rFeaturesV1, Mast3rFeaturesV2, SegmentRecord
+
+logger = logging.getLogger(__name__)
+
+
+class Sam3ProcessorProtocol(Protocol):
+    def set_image(self, image: Image.Image, state: dict[str, Any] | None = None) -> dict[str, Any]: ...
+    def reset_all_prompts(self, state: dict[str, Any]) -> None: ...
+    def set_text_prompt(self, prompt: str, state: dict[str, Any]) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True)

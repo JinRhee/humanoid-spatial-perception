@@ -198,7 +198,8 @@ def run_pipeline(images_dir: Path, config_path: Path, output_dir: Path, preset: 
                 },
             )
         )
-
+        
+        print(f"Run geometry")
         t0 = time.time()
         checkpoints = cfg.paths.get("checkpoints", {})
         backbone = run_backbone(selected, cfg.backbone, cfg.memory, checkpoints=checkpoints)
@@ -223,17 +224,26 @@ def run_pipeline(images_dir: Path, config_path: Path, output_dir: Path, preset: 
         pcd_dir = output_dir / "pointclouds"
         ensure_dir(pcd_dir)
         for fr in selected:
+            print(f"Frame {fr.sec:010d}_{fr.nsec:09d}")
             pc = geom.pointclouds.get((fr.sec, fr.nsec), np.zeros((0, 3), dtype=np.float32))
-            write_pcd_xyz(pcd_dir / f"pointcloud_{fr.sec}_{fr.nsec}.pcd", pc)
+            write_pcd_xyz(pcd_dir / f"pcd_{fr.sec:010d}_{fr.nsec:09d}.pcd", pc)
             last_successful_frame = f"{fr.sec}_{fr.nsec}"
         write_pcd_xyz(output_dir / "map_final.pcd", geom.global_map)
         timings.append(_log_stage("geometry", t0, {"poses": len(geom.trajectory), **_memory_snapshot()}))
 
+        print(f"Run semantics")
         t0 = time.time()
         prompt_path = (config_path.parent / str(cfg.semantics["prompt_file"])).resolve()
         synonym_path = (config_path.parent / str(cfg.semantics["synonym_map"])).resolve()
         prompts = load_prompts(prompt_path, set(x.lower() for x in cfg.semantics.get("structural_labels", [])))
         synonyms = load_synonyms(synonym_path)
+        configured_checkpoints = cfg.paths.get("checkpoints", {})
+        sam3_checkpoint_cfg = configured_checkpoints.get("sam3")
+        sam3_checkpoint_path = None
+        if sam3_checkpoint_cfg:
+            candidate = (config_path.parent / str(sam3_checkpoint_cfg)).resolve()
+            if candidate.exists():
+                sam3_checkpoint_path = str(candidate)
         sem = run_semantics(
             selected,
             backbone,
@@ -251,6 +261,7 @@ def run_pipeline(images_dir: Path, config_path: Path, output_dir: Path, preset: 
             sem.object_segments,
             keyframe_count=len(selected),
             max_masks_per_frame=int(cfg.memory.get("max_masks_per_frame", 0)),
+            sam3_checkpoint_path=sam3_checkpoint_path,
         )
         for fr in selected:
             rows = sem.per_frame_rows.get((fr.sec, fr.nsec), [])
