@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import numpy as np
 from PIL import Image
@@ -12,6 +12,12 @@ from .config import read_yaml_file
 from .types import FrameRecord, SegmentRecord
 
 logger = logging.getLogger(__name__)
+
+
+class Sam3ProcessorProtocol(Protocol):
+    def set_image(self, image: Image.Image, state: dict[str, Any] | None = None) -> dict[str, Any]: ...
+    def reset_all_prompts(self, state: dict[str, Any]) -> None: ...
+    def set_text_prompt(self, prompt: str, state: dict[str, Any]) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True)
@@ -71,7 +77,9 @@ def _simple_prompt_masks(h: int, w: int, prompt_count: int) -> list[np.ndarray]:
     return masks
 
 
-def _build_sam3_processor(sam3_checkpoint_path: str | None, detection_conf_threshold: float) -> Any | None:
+def _build_sam3_processor(
+    sam3_checkpoint_path: str | None, detection_conf_threshold: float
+) -> Sam3ProcessorProtocol | None:
     try:
         import torch
         from sam3.model.sam3_image_processor import Sam3Processor
@@ -106,7 +114,7 @@ def _prompt_masks_with_sam3(
         return fallback_masks, fallback_scores
 
     try:
-        state: dict[str, Any] = processor.set_image(rgb_img, state={})
+        state: dict[str, Any] = processor.set_image(rgb_img, state=None)
     except (RuntimeError, ValueError, TypeError) as exc:
         logger.debug("SAM3 set_image failed; falling back to simple masks: %s", exc)
         return fallback_masks, fallback_scores
@@ -124,7 +132,7 @@ def _prompt_masks_with_sam3(
                 scores.append(0.0)
                 continue
 
-            best = int(pred_scores.argmax().item())
+            best = int(np.asarray(pred_scores.detach().cpu()).argmax())
             best_mask = pred_masks[best].detach().cpu().numpy().squeeze().astype(bool)
             best_score = float(pred_scores[best].detach().cpu().item())
             masks.append(best_mask)
