@@ -132,8 +132,20 @@ def _prompt_masks_with_sam3(
                 scores.append(0.0)
                 continue
 
-            best = int(np.asarray(pred_scores.detach().cpu()).argmax())
-            best_mask = pred_masks[best].detach().cpu().numpy().squeeze().astype(bool)
+            scores_np = np.asarray(pred_scores.detach().cpu())
+            if scores_np.size == 0:
+                masks.append(np.zeros((h, w), dtype=bool))
+                scores.append(0.0)
+                continue
+
+            best = int(scores_np.argmax())
+            best_mask = pred_masks[best].detach().cpu().numpy().squeeze()
+            if best_mask.shape != (h, w):
+                masks.append(np.zeros((h, w), dtype=bool))
+                scores.append(0.0)
+                continue
+
+            best_mask = best_mask.astype(bool)
             best_score = float(pred_scores[best].detach().cpu().item())
             masks.append(best_mask)
             scores.append(best_score)
