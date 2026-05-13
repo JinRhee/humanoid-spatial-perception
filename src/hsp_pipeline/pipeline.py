@@ -175,184 +175,165 @@ def run_pipeline(images_dir: Path, config_path: Path, output_dir: Path, preset: 
     cfg = load_config(config_path, preset)
     _guard_vram(cfg)
 
-    try:
-        t0 = time.time()
-        frames = load_frames(images_dir)
-        timings.append(_log_stage("ingest", t0, {"frames": len(frames), **_memory_snapshot()}))
-
-        t0 = time.time()
-        selected, kstats = select_keyframes(
-            frames,
-            mode=str(cfg.keyframe["mode"]),
-            target_hz=float(cfg.keyframe.get("target_hz", 5.0)),
+    t0 = time.time()
+    frames = load_frames(images_dir)
+    timings.append(_log_stage("ingest", t0, {"frames": len(frames), **_memory_snapshot()}))
+    t0 = time.time()
+    selected, kstats = select_keyframes(
+        frames,
+        mode=str(cfg.keyframe["mode"]),
+        target_hz=float(cfg.keyframe.get("target_hz", 5.0)),
+    )
+    timings.append(
+        _log_stage(
+            "keyframe_select",
+            t0,
+            {
+                "selected": kstats.selected_count,
+                "rejected": kstats.rejected_count,
+                "effective_hz": round(kstats.effective_hz, 4),
+                **_memory_snapshot(),
+            },
         )
-        timings.append(
-            _log_stage(
-                "keyframe_select",
-                t0,
-                {
-                    "selected": kstats.selected_count,
-                    "rejected": kstats.rejected_count,
-                    "effective_hz": round(kstats.effective_hz, 4),
-                    **_memory_snapshot(),
-                },
-            )
+    )
+    t0 = time.time()
+    checkpoints = cfg.paths.get("checkpoints", {})
+    backbone = run_backbone(selected, cfg.backbone, cfg.memory, checkpoints=checkpoints)
+    if backbone.frames:
+        first_frame = next(iter(backbone.frames.values()))
+        pointmap_shape = tuple(first_frame.pointmap.points.shape[:2])
+    else:
+        pointmap_shape = None
+    timings.append(
+        _log_stage(
+            "backbone",
+            t0,
+            {"frames": len(backbone.frames), "pairs": len(backbone.pairs), **_memory_snapshot()},
         )
-
-        t0 = time.time()
-        checkpoints = cfg.paths.get("checkpoints", {})
-        backbone = run_backbone(selected, cfg.backbone, cfg.memory, checkpoints=checkpoints)
-        if backbone.frames:
-            first_frame = next(iter(backbone.frames.values()))
-            pointmap_shape = tuple(first_frame.pointmap.points.shape[:2])
-        else:
-            pointmap_shape = None
-        timings.append(
-            _log_stage(
-                "backbone",
-                t0,
-                {"frames": len(backbone.frames), "pairs": len(backbone.pairs), **_memory_snapshot()},
-            )
+    )
+    t0 = time.time()
+    slam_cfg = {**cfg.geometry, **cfg.slam}
+    geom = run_geometry(selected, backbone, cfg.geometry, slam_cfg)
+    sanity_check_geometry(geom.trajectory, geom.pointclouds, geom.pointmaps)
+    write_tum_trajectory(output_dir / "trajectory_tum.txt", geom.trajectory)
+    pcd_dir = output_dir / "pointclouds"
+    ensure_dir(pcd_dir)
+    for fr in selected:
+        pc = geom.pointclouds.get((fr.sec, fr.nsec), np.zeros((0, 3), dtype=np.float32))
+        write_pcd_xyz(pcd_dir / f"pointcloud_{fr.sec}_{fr.nsec}.pcd", pc)
+        last_successful_frame = f"{fr.sec}_{fr.nsec}"
+    write_pcd_xyz(output_dir / "map_final.pcd", geom.global_map)
+    timings.append(_log_stage("geometry", t0, {"poses": len(geom.trajectory), **_memory_snapshot()}))
+    t0 = time.time()
+    prompt_path = (config_path.parent / str(cfg.semantics["prompt_file"])).resolve()
+    synonym_path = (config_path.parent / str(cfg.semantics["synonym_map"])).resolve()
+    prompts = load_prompts(prompt_path, set(x.lower() for x in cfg.semantics.get("structural_labels", [])))
+    synonyms = load_synonyms(synonym_path)
+    sem = run_semantics(
+        selected,
+        backbone,
+        prompts,
+        synonyms,
+        conf_min=float(cfg.semantics.get("point_conf_min", 0.1)),
+        detection_conf_threshold=float(cfg.semantics.get("detection_conf_threshold", 0.01)),
+        pose_matrices=geom.pose_matrices,
+        max_masks_per_frame=int(cfg.memory.get("max_masks_per_frame", 0)),
+        sam3_cfg=cfg.sam3,
+        segmast3r_cfg=cfg.segmast3r,
+        checkpoints=checkpoints,
+    )
+    sanity_check_semantics(
+        sem.object_segments,
+        keyframe_count=len(selected),
+        max_masks_per_frame=int(cfg.memory.get("max_masks_per_frame", 0)),
+    )
+    for fr in selected:
+        rows = sem.per_frame_rows.get((fr.sec, fr.nsec), [])
+        write_jsonl(output_dir / f"segments_{fr.sec}_{fr.nsec}.jsonl", rows)
+    write_pcd_xyz(output_dir / "background_geometry.pcd", sem.structural_points)
+    timings.append(
+        _log_stage(
+            "semantics",
+            t0,
+            {"object_segments": len(sem.object_segments), "structural_points": int(sem.structural_points.shape[0]), **_memory_snapshot()},
         )
-
-        t0 = time.time()
-        slam_cfg = {**cfg.geometry, **cfg.slam}
-        geom = run_geometry(selected, backbone, cfg.geometry, slam_cfg)
-        sanity_check_geometry(geom.trajectory, geom.pointclouds, geom.pointmaps)
-        write_tum_trajectory(output_dir / "trajectory_tum.txt", geom.trajectory)
-        pcd_dir = output_dir / "pointclouds"
-        ensure_dir(pcd_dir)
-        for fr in selected:
-            pc = geom.pointclouds.get((fr.sec, fr.nsec), np.zeros((0, 3), dtype=np.float32))
-            write_pcd_xyz(pcd_dir / f"pointcloud_{fr.sec}_{fr.nsec}.pcd", pc)
-            last_successful_frame = f"{fr.sec}_{fr.nsec}"
-        write_pcd_xyz(output_dir / "map_final.pcd", geom.global_map)
-        timings.append(_log_stage("geometry", t0, {"poses": len(geom.trajectory), **_memory_snapshot()}))
-
-        t0 = time.time()
-        prompt_path = (config_path.parent / str(cfg.semantics["prompt_file"])).resolve()
-        synonym_path = (config_path.parent / str(cfg.semantics["synonym_map"])).resolve()
-        prompts = load_prompts(prompt_path, set(x.lower() for x in cfg.semantics.get("structural_labels", [])))
-        synonyms = load_synonyms(synonym_path)
-        sem = run_semantics(
-            selected,
-            backbone,
-            prompts,
-            synonyms,
-            conf_min=float(cfg.semantics.get("point_conf_min", 0.1)),
-            detection_conf_threshold=float(cfg.semantics.get("detection_conf_threshold", 0.01)),
-            pose_matrices=geom.pose_matrices,
-            max_masks_per_frame=int(cfg.memory.get("max_masks_per_frame", 0)),
-            sam3_cfg=cfg.sam3,
-            segmast3r_cfg=cfg.segmast3r,
-            checkpoints=checkpoints,
+    )
+    t0 = time.time()
+    grouped = _frame_groups(sem.object_segments)
+    pairwise = _run_pairwise_matching(grouped)
+    write_jsonl(output_dir / "pairwise_matches.jsonl", pairwise)
+    mw = cfg.fusion.get("merge_weights", {})
+    tracker = InstanceTracker(
+        ema_decay=float(cfg.fusion.get("ema_decay", 0.9)),
+        merge_threshold=float(cfg.fusion.get("merge_threshold", 0.55)),
+        max_centroid_distance=float(cfg.fusion.get("max_centroid_distance", 3.0)),
+        label_mismatch_penalty=float(cfg.fusion.get("label_mismatch_penalty", 0.5)),
+        min_support_count=int(cfg.fusion.get("min_support_count", 2)),
+        resweep_interval=int(cfg.fusion.get("resweep_interval", 25)),
+        skip_resweep=bool(cfg.fusion.get("skip_resweep", False)),
+        weights=MergeWeights(
+            descriptor=float(mw.get("descriptor", 0.40)),
+            centroid=float(mw.get("centroid", 0.25)),
+            iou=float(mw.get("iou", 0.25)),
+            size=float(mw.get("size", 0.10)),
+        ),
+    )
+    ts_sorted = sorted(grouped)
+    for idx, ts in enumerate(ts_sorted):
+        tracker.update_frame(grouped[ts], frame_idx=idx)
+    keep, low = tracker.final_split()
+    _sanity_check_instances(keep, geom.global_map)
+    write_jsonl(output_dir / "instances.jsonl", [inst.as_json() for inst in keep])
+    write_jsonl(output_dir / "low_confidence_instances.jsonl", [inst.as_json() for inst in low])
+    _instances_to_ply(keep, output_dir / "instances.ply")
+    label_dist = Counter(inst.canonical_label for inst in keep)
+    mean_support = float(np.mean([inst.support_count for inst in keep])) if keep else 0.0
+    print(
+        f"[stats] instances={len(keep)} mean_support={mean_support:.2f} labels={dict(label_dist)}"
+    )
+    timings.append(
+        _log_stage(
+            "fusion_tracking_export",
+            t0,
+            {
+                "instances": len(keep),
+                "low_conf_instances": len(low),
+                **_memory_snapshot(),
+            },
         )
-        sanity_check_semantics(
-            sem.object_segments,
-            keyframe_count=len(selected),
-            max_masks_per_frame=int(cfg.memory.get("max_masks_per_frame", 0)),
-        )
-        for fr in selected:
-            rows = sem.per_frame_rows.get((fr.sec, fr.nsec), [])
-            write_jsonl(output_dir / f"segments_{fr.sec}_{fr.nsec}.jsonl", rows)
-        write_pcd_xyz(output_dir / "background_geometry.pcd", sem.structural_points)
-        timings.append(
-            _log_stage(
-                "semantics",
-                t0,
-                {"object_segments": len(sem.object_segments), "structural_points": int(sem.structural_points.shape[0]), **_memory_snapshot()},
-            )
-        )
-
-        t0 = time.time()
-        grouped = _frame_groups(sem.object_segments)
-        pairwise = _run_pairwise_matching(grouped)
-        write_jsonl(output_dir / "pairwise_matches.jsonl", pairwise)
-
-        mw = cfg.fusion.get("merge_weights", {})
-        tracker = InstanceTracker(
-            ema_decay=float(cfg.fusion.get("ema_decay", 0.9)),
-            merge_threshold=float(cfg.fusion.get("merge_threshold", 0.55)),
-            max_centroid_distance=float(cfg.fusion.get("max_centroid_distance", 3.0)),
-            label_mismatch_penalty=float(cfg.fusion.get("label_mismatch_penalty", 0.5)),
-            min_support_count=int(cfg.fusion.get("min_support_count", 2)),
-            resweep_interval=int(cfg.fusion.get("resweep_interval", 25)),
-            skip_resweep=bool(cfg.fusion.get("skip_resweep", False)),
-            weights=MergeWeights(
-                descriptor=float(mw.get("descriptor", 0.40)),
-                centroid=float(mw.get("centroid", 0.25)),
-                iou=float(mw.get("iou", 0.25)),
-                size=float(mw.get("size", 0.10)),
-            ),
-        )
-
-        ts_sorted = sorted(grouped)
-        for idx, ts in enumerate(ts_sorted):
-            tracker.update_frame(grouped[ts], frame_idx=idx)
-
-        keep, low = tracker.final_split()
-        _sanity_check_instances(keep, geom.global_map)
-
-        write_jsonl(output_dir / "instances.jsonl", [inst.as_json() for inst in keep])
-        write_jsonl(output_dir / "low_confidence_instances.jsonl", [inst.as_json() for inst in low])
-        _instances_to_ply(keep, output_dir / "instances.ply")
-
-        label_dist = Counter(inst.canonical_label for inst in keep)
-        mean_support = float(np.mean([inst.support_count for inst in keep])) if keep else 0.0
-        print(
-            f"[stats] instances={len(keep)} mean_support={mean_support:.2f} labels={dict(label_dist)}"
-        )
-
-        timings.append(
-            _log_stage(
-                "fusion_tracking_export",
-                t0,
-                {
-                    "instances": len(keep),
-                    "low_conf_instances": len(low),
-                    **_memory_snapshot(),
-                },
-            )
-        )
-
-        t0 = time.time()
-        repo_root = Path(__file__).resolve().parents[2]
-        submodules = {
-            "external/MASt3R-SLAM": _git_submodule_hash(repo_root, "external/MASt3R-SLAM"),
-            "external/segmast3r": _git_submodule_hash(repo_root, "external/segmast3r"),
-            "external/sam3": _git_submodule_hash(repo_root, "external/sam3"),
+    )
+    t0 = time.time()
+    repo_root = Path(__file__).resolve().parents[2]
+    submodules = {
+        "external/MASt3R-SLAM": _git_submodule_hash(repo_root, "external/MASt3R-SLAM"),
+        "external/segmast3r": _git_submodule_hash(repo_root, "external/segmast3r"),
+        "external/sam3": _git_submodule_hash(repo_root, "external/sam3"),
+    }
+    checkpoint_info = {
+        name: {
+            "path": p,
+            "sha256": _sha256((config_path.parent / str(p)).resolve()) if p else "",
         }
-        checkpoint_info = {
-            name: {
-                "path": p,
-                "sha256": _sha256((config_path.parent / str(p)).resolve()) if p else "",
-            }
-            for name, p in checkpoints.items()
-        }
-
-        prompt_file = prompt_path
-        synonym_file = synonym_path
-
-        run_meta = {
-            "run_timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "submodule_commits": submodules,
-            "model_checkpoints": checkpoint_info,
-            "prompt_file_contents": prompt_file.read_text(encoding="utf-8") if prompt_file.exists() else "",
-            "synonym_map_contents": synonym_file.read_text(encoding="utf-8") if synonym_file.exists() else "",
-            "resolved_config": cfg.raw,
-            "effective_keyframe_hz": kstats.effective_hz,
-            "total_frames_ingested": len(frames),
-            "total_keyframes_selected": len(selected),
-            "total_backbone_frames": len(backbone.frames),
-            "total_backbone_pairs": len(backbone.pairs),
-            "pointmap_resolution": pointmap_shape,
-            "total_instances_final": len(keep),
-            "total_instances_low_confidence": len(low),
-            "stage_timings_seconds": [{"stage": t.name, "seconds": t.seconds} for t in timings],
-        }
-        dump_yaml_file(output_dir / "run_metadata.yaml", run_meta)
-        timings.append(_log_stage("metadata", t0, {"path": str(output_dir / "run_metadata.yaml")}))
-
-    except Exception as exc:
-        _write_error_report(output_dir, stage=(timings[-1].name if timings else "startup"), err=exc, last_frame=last_successful_frame)
-        raise
+        for name, p in checkpoints.items()
+    }
+    prompt_file = prompt_path
+    synonym_file = synonym_path
+    run_meta = {
+        "run_timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "submodule_commits": submodules,
+        "model_checkpoints": checkpoint_info,
+        "prompt_file_contents": prompt_file.read_text(encoding="utf-8") if prompt_file.exists() else "",
+        "synonym_map_contents": synonym_file.read_text(encoding="utf-8") if synonym_file.exists() else "",
+        "resolved_config": cfg.raw,
+        "effective_keyframe_hz": kstats.effective_hz,
+        "total_frames_ingested": len(frames),
+        "total_keyframes_selected": len(selected),
+        "total_backbone_frames": len(backbone.frames),
+        "total_backbone_pairs": len(backbone.pairs),
+        "pointmap_resolution": pointmap_shape,
+        "total_instances_final": len(keep),
+        "total_instances_low_confidence": len(low),
+        "stage_timings_seconds": [{"stage": t.name, "seconds": t.seconds} for t in timings],
+    }
+    dump_yaml_file(output_dir / "run_metadata.yaml", run_meta)
+    timings.append(_log_stage("metadata", t0, {"path": str(output_dir / "run_metadata.yaml")}))
