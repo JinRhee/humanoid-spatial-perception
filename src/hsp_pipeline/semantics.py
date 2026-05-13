@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,8 @@ from PIL import Image
 
 from .config import read_yaml_file
 from .types import FrameRecord, SegmentRecord
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -73,7 +76,7 @@ def _build_sam3_processor(sam3_checkpoint_path: str | None, detection_conf_thres
         import torch
         from sam3.model.sam3_image_processor import Sam3Processor
         from sam3.model_builder import build_sam3_image_model
-    except Exception:
+    except (ImportError, ModuleNotFoundError):
         return None
 
     try:
@@ -83,7 +86,8 @@ def _build_sam3_processor(sam3_checkpoint_path: str | None, detection_conf_thres
             model_kwargs["checkpoint_path"] = sam3_checkpoint_path
         model = build_sam3_image_model(**model_kwargs)
         return Sam3Processor(model, device=device, confidence_threshold=float(detection_conf_threshold))
-    except Exception:
+    except (RuntimeError, OSError, ValueError, FileNotFoundError) as exc:
+        logger.debug("SAM3 initialization failed; falling back to simple masks: %s", exc)
         return None
 
 
@@ -103,7 +107,8 @@ def _prompt_masks_with_sam3(
 
     try:
         state: dict[str, Any] = processor.set_image(rgb_img, state={})
-    except Exception:
+    except (RuntimeError, ValueError, TypeError) as exc:
+        logger.debug("SAM3 set_image failed; falling back to simple masks: %s", exc)
         return fallback_masks, fallback_scores
 
     masks: list[np.ndarray] = []
@@ -124,7 +129,8 @@ def _prompt_masks_with_sam3(
             best_score = float(pred_scores[best].detach().cpu().item())
             masks.append(best_mask)
             scores.append(best_score)
-        except Exception:
+        except (RuntimeError, ValueError, TypeError, AttributeError, KeyError) as exc:
+            logger.debug("SAM3 prompt inference failed for '%s': %s", prompt.label, exc)
             masks.append(np.zeros((h, w), dtype=bool))
             scores.append(0.0)
 
