@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
-from src.hsp_pipeline.cli import main
+import sys
+from pathlib import Path
+
+# Ensure the repository `src/` directory is on sys.path so internal
+# imports that expect `hsp_pipeline` as a top-level package work.
+ROOT = Path(__file__).resolve().parent
+SRC_DIR = ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from hsp_pipeline.cli import main
+
 
 if __name__ == "__main__":
     main()

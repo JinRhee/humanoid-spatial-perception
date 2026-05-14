@@ -15,10 +15,9 @@ from .backbone import run_backbone
 from .config import PipelineConfig, dump_yaml_file, load_config
 from .geometry import run_geometry, sanity_check_geometry
 from .ingest import load_frames
-from .io_utils import ensure_dir, write_jsonl, write_pcd_xyz, write_ply_xyzrgb, write_tum_trajectory
+from .io_utils import write_jsonl, write_pcd_xyz, write_ply_xyzrgb, write_tum_trajectory
 from .keyframes import select_keyframes
 from .matching import cosine_affinity, mutual_matches_with_dustbin, sinkhorn_logspace
-from .semantics import load_prompts, load_synonyms, run_semantics, sanity_check_semantics
 from .tracking import InstanceTracker, MergeWeights
 
 
@@ -26,25 +25,6 @@ from .tracking import InstanceTracker, MergeWeights
 class StageTiming:
     name: str
     seconds: float
-
-
-def _sha256(path: Path) -> str:
-    if not path.exists() or not path.is_file():
-        return ""
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        while True:
-            chunk = f.read(1024 * 1024)
-            if not chunk:
-                break
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def _git_submodule_hash(repo_root: Path, sub_path: str) -> str:
-    cmd = ["git", "-C", str(repo_root), "rev-parse", f"HEAD:{sub_path}"]
-    out = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    return out.stdout.strip() if out.returncode == 0 else ""
 
 
 def _write_error_report(out_dir: Path, stage: str, err: Exception, last_frame: str | None) -> None:
@@ -107,233 +87,171 @@ def _instances_to_ply(instances, path: Path) -> None:
     write_ply_xyzrgb(path, np.concatenate(all_pts, axis=0), np.concatenate(all_rgb, axis=0))
 
 
-def _sanity_check_instances(instances, global_map: np.ndarray) -> None:
-    if not instances:
-        raise RuntimeError("Sanity check failed: instances.jsonl is empty")
-    if global_map.size == 0:
-        return
-    map_min = global_map.min(axis=0)
-    map_max = global_map.max(axis=0)
-    for inst in instances:
-        c = inst.centroid
-        if np.any(c < map_min) or np.any(c > map_max):
-            raise RuntimeError(
-                f"Sanity check failed: centroid for instance {inst.instance_id} lies outside global map bounds"
-            )
-
-
-def _memory_snapshot() -> dict[str, Any]:
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            return {
-                "cuda_allocated_mb": round(torch.cuda.memory_allocated() / (1024 * 1024), 2),
-                "cuda_reserved_mb": round(torch.cuda.memory_reserved() / (1024 * 1024), 2),
-            }
-    except Exception:
-        pass
-    return {"cuda": "unavailable"}
-
-
-def _estimate_model_footprint_mb(cfg: PipelineConfig) -> dict[str, float]:
-    fp16 = bool(cfg.memory.get("fp16", False))
-    scale = 0.7 if fp16 else 1.0
-    return {
-        "mast3r_backbone": 5000 * scale,
-        "sam3_image_model": 2800 * scale,
-        "segmast3r_heads": 600 * scale,
-    }
-
-
-def _guard_vram(cfg: PipelineConfig) -> None:
-    est = _estimate_model_footprint_mb(cfg)
-    total = sum(est.values())
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            avail = torch.cuda.get_device_properties(0).total_memory / (1024 * 1024)
-            if total > avail:
-                raise RuntimeError(
-                    "Estimated model footprint exceeds available VRAM: "
-                    + ", ".join(f"{k}={v:.1f}MB" for k, v in est.items())
-                    + f", total={total:.1f}MB, available={avail:.1f}MB"
-                )
-    except ImportError:
-        pass
-
 
 def run_pipeline(images_dir: Path, config_path: Path, output_dir: Path, preset: str | None) -> None:
-    config_path = config_path.resolve()
-    output_dir = output_dir.resolve()
-    ensure_dir(output_dir)
+    return
 
-    timings: list[StageTiming] = []
-    last_successful_frame = None
+# ------------------------------------------------------------------ #
+# Entry point                                                         #
+# ------------------------------------------------------------------ #
 
-    cfg = load_config(config_path, preset)
-    _guard_vram(cfg)
+if __name__ == "__main__":
+    mp.set_start_method("spawn")
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.set_grad_enabled(False)
 
-    t0 = time.time()
-    frames = load_frames(images_dir)
-    timings.append(_log_stage("ingest", t0, {"frames": len(frames), **_memory_snapshot()}))
-    t0 = time.time()
-    selected, kstats = select_keyframes(
-        frames,
-        mode=str(cfg.keyframe["mode"]),
-        target_hz=float(cfg.keyframe.get("target_hz", 5.0)),
-    )
-    timings.append(
-        _log_stage(
-            "keyframe_select",
-            t0,
-            {
-                "selected": kstats.selected_count,
-                "rejected": kstats.rejected_count,
-                "effective_hz": round(kstats.effective_hz, 4),
-                **_memory_snapshot(),
-            },
-        )
-    )
-    t0 = time.time()
-    checkpoints = cfg.paths.get("checkpoints", {})
-    backbone = run_backbone(selected, cfg.backbone, cfg.memory, checkpoints=checkpoints)
-    if backbone.frames:
-        first_frame = next(iter(backbone.frames.values()))
-        pointmap_shape = tuple(first_frame.pointmap.points.shape[:2])
-    else:
-        pointmap_shape = None
-    timings.append(
-        _log_stage(
-            "backbone",
-            t0,
-            {"frames": len(backbone.frames), "pairs": len(backbone.pairs), **_memory_snapshot()},
-        )
-    )
-    t0 = time.time()
-    slam_cfg = {**cfg.geometry, **cfg.slam}
-    geom = run_geometry(selected, backbone, cfg.geometry, slam_cfg)
-    sanity_check_geometry(geom.trajectory, geom.pointclouds, geom.pointmaps)
-    write_tum_trajectory(output_dir / "trajectory_tum.txt", geom.trajectory)
-    pcd_dir = output_dir / "pointclouds"
-    ensure_dir(pcd_dir)
-    for fr in selected:
-        pc = geom.pointclouds.get((fr.sec, fr.nsec), np.zeros((0, 3), dtype=np.float32))
-        write_pcd_xyz(pcd_dir / f"pointcloud_{fr.sec}_{fr.nsec}.pcd", pc)
-        last_successful_frame = f"{fr.sec}_{fr.nsec}"
-    write_pcd_xyz(output_dir / "map_final.pcd", geom.global_map)
-    timings.append(_log_stage("geometry", t0, {"poses": len(geom.trajectory), **_memory_snapshot()}))
-    t0 = time.time()
-    prompt_path = (config_path.parent / str(cfg.semantics["prompt_file"])).resolve()
-    synonym_path = (config_path.parent / str(cfg.semantics["synonym_map"])).resolve()
-    prompts = load_prompts(prompt_path, set(x.lower() for x in cfg.semantics.get("structural_labels", [])))
-    synonyms = load_synonyms(synonym_path)
-    sem = run_semantics(
-        selected,
-        backbone,
-        prompts,
-        synonyms,
-        conf_min=float(cfg.semantics.get("point_conf_min", 0.1)),
-        detection_conf_threshold=float(cfg.semantics.get("detection_conf_threshold", 0.01)),
-        pose_matrices=geom.pose_matrices,
-        max_masks_per_frame=int(cfg.memory.get("max_masks_per_frame", 0)),
-        sam3_cfg=cfg.sam3,
-        segmast3r_cfg=cfg.segmast3r,
-        checkpoints=checkpoints,
-    )
-    sanity_check_semantics(
-        sem.object_segments,
-        keyframe_count=len(selected),
-        max_masks_per_frame=int(cfg.memory.get("max_masks_per_frame", 0)),
-    )
-    for fr in selected:
-        rows = sem.per_frame_rows.get((fr.sec, fr.nsec), [])
-        write_jsonl(output_dir / f"segments_{fr.sec}_{fr.nsec}.jsonl", rows)
-    write_pcd_xyz(output_dir / "background_geometry.pcd", sem.structural_points)
-    timings.append(
-        _log_stage(
-            "semantics",
-            t0,
-            {"object_segments": len(sem.object_segments), "structural_points": int(sem.structural_points.shape[0]), **_memory_snapshot()},
-        )
-    )
-    t0 = time.time()
-    grouped = _frame_groups(sem.object_segments)
-    pairwise = _run_pairwise_matching(grouped)
-    write_jsonl(output_dir / "pairwise_matches.jsonl", pairwise)
-    mw = cfg.fusion.get("merge_weights", {})
-    tracker = InstanceTracker(
-        ema_decay=float(cfg.fusion.get("ema_decay", 0.9)),
-        merge_threshold=float(cfg.fusion.get("merge_threshold", 0.55)),
-        max_centroid_distance=float(cfg.fusion.get("max_centroid_distance", 3.0)),
-        label_mismatch_penalty=float(cfg.fusion.get("label_mismatch_penalty", 0.5)),
-        min_support_count=int(cfg.fusion.get("min_support_count", 2)),
-        resweep_interval=int(cfg.fusion.get("resweep_interval", 25)),
-        skip_resweep=bool(cfg.fusion.get("skip_resweep", False)),
-        weights=MergeWeights(
-            descriptor=float(mw.get("descriptor", 0.40)),
-            centroid=float(mw.get("centroid", 0.25)),
-            iou=float(mw.get("iou", 0.25)),
-            size=float(mw.get("size", 0.10)),
-        ),
-    )
-    ts_sorted = sorted(grouped)
-    for idx, ts in enumerate(ts_sorted):
-        tracker.update_frame(grouped[ts], frame_idx=idx)
-    keep, low = tracker.final_split()
-    _sanity_check_instances(keep, geom.global_map)
-    write_jsonl(output_dir / "instances.jsonl", [inst.as_json() for inst in keep])
-    write_jsonl(output_dir / "low_confidence_instances.jsonl", [inst.as_json() for inst in low])
-    _instances_to_ply(keep, output_dir / "instances.ply")
-    label_dist = Counter(inst.canonical_label for inst in keep)
-    mean_support = float(np.mean([inst.support_count for inst in keep])) if keep else 0.0
-    print(
-        f"[stats] instances={len(keep)} mean_support={mean_support:.2f} labels={dict(label_dist)}"
-    )
-    timings.append(
-        _log_stage(
-            "fusion_tracking_export",
-            t0,
-            {
-                "instances": len(keep),
-                "low_conf_instances": len(low),
-                **_memory_snapshot(),
-            },
-        )
-    )
-    t0 = time.time()
-    repo_root = Path(__file__).resolve().parents[2]
-    submodules = {
-        "external/MASt3R-SLAM": _git_submodule_hash(repo_root, "external/MASt3R-SLAM"),
-        "external/segmast3r": _git_submodule_hash(repo_root, "external/segmast3r"),
-        "external/sam3": _git_submodule_hash(repo_root, "external/sam3"),
-    }
-    checkpoint_info = {
-        name: {
-            "path": p,
-            "sha256": _sha256((config_path.parent / str(p)).resolve()) if p else "",
-        }
-        for name, p in checkpoints.items()
-    }
-    prompt_file = prompt_path
-    synonym_file = synonym_path
-    run_meta = {
-        "run_timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "submodule_commits": submodules,
-        "model_checkpoints": checkpoint_info,
-        "prompt_file_contents": prompt_file.read_text(encoding="utf-8") if prompt_file.exists() else "",
-        "synonym_map_contents": synonym_file.read_text(encoding="utf-8") if synonym_file.exists() else "",
-        "resolved_config": cfg.raw,
-        "effective_keyframe_hz": kstats.effective_hz,
-        "total_frames_ingested": len(frames),
-        "total_keyframes_selected": len(selected),
-        "total_backbone_frames": len(backbone.frames),
-        "total_backbone_pairs": len(backbone.pairs),
-        "pointmap_resolution": pointmap_shape,
-        "total_instances_final": len(keep),
-        "total_instances_low_confidence": len(low),
-        "stage_timings_seconds": [{"stage": t.name, "seconds": t.seconds} for t in timings],
-    }
-    dump_yaml_file(output_dir / "run_metadata.yaml", run_meta)
-    timings.append(_log_stage("metadata", t0, {"path": str(output_dir / "run_metadata.yaml")}))
+    # Parse arguments: dataset, config, calib, no-viz,
+    # and segmentation hyperparams (conf, iou, imgsz)
+
+    # Load SLAM config from yaml
+
+    # ---------------------------------------------------------------- #
+    # Setup                                                             #
+    # ---------------------------------------------------------------- #
+
+    # Create multiprocessing manager and queues (main<->viz)
+
+    # Load dataset and subsample per config
+
+    # Apply calibration if provided
+
+    # Create SharedKeyframes and SharedStates
+
+    # Build UnifiedMASt3RInfer:
+    #   - load AsymmetricMASt3R weights into model.encoder
+    #   - call model.prepare(device)
+    #   - call model.share_memory() so backend process can access encoder
+
+    # Pass model.encoder (not model) to FrameTracker, so the tracker's
+    # internal mast3r_match_symmetric uses the same weights
+
+    # Instantiate FastSAM segmentation pipeline (main process only)
+
+    # Instantiate SegmentationStore (main process only)
+
+    # Set up calibration matrix K if use_calib
+
+    # Clean up any previous trajectory / reconstruction files
+
+    # ---------------------------------------------------------------- #
+    # Spawn processes                                                   #
+    # ---------------------------------------------------------------- #
+
+    # Spawn viz process if not --no-viz
+
+    # Spawn backend process:
+    #   - pass model.encoder so FactorGraph and retrieval database
+    #     use the same weights without re-loading
+
+    # ---------------------------------------------------------------- #
+    # Seed frame 0 before the loop                                      #
+    # ---------------------------------------------------------------- #
+
+    # Load frame 0 image from dataset
+    # Run FastSAM on frame 0 -> prev_masks_raw
+    # Store raw image as prev_img_np
+    # prev_frame_obj = None (SLAM frame not created until INIT fires)
+
+    # ---------------------------------------------------------------- #
+    # Main tracking loop                                                #
+    # ---------------------------------------------------------------- #
+
+    i = 0
+    while True:
+
+        # Check viz messages; handle pause / terminate signals
+
+        # Break if all frames consumed
+
+        # Load current frame (timestamp, image) from dataset
+
+        # Run FastSAM on current image -> curr_masks_raw
+        # (always run, even in RELOC, so masks are ready if mode changes)
+
+        # Create SLAM frame object (pose, image, true_shape, feat=None, pos=None)
+
+        # ------------------------------------------------------------ #
+        # INIT                                                          #
+        # ------------------------------------------------------------ #
+        if mode == Mode.INIT:
+            # Run mono inference to bootstrap pointmap (no pair yet)
+            # Append frame to keyframes
+            # Queue global optimisation for frame 0
+            # Set mode -> TRACKING
+            # Cache frame as prev_frame_obj
+            # Cache curr_masks_raw as prev_masks_raw
+            # Advance i; continue
+
+            pass
+
+        # ------------------------------------------------------------ #
+        # TRACKING                                                      #
+        # ------------------------------------------------------------ #
+        elif mode == Mode.TRACKING:
+            # Resize prev_masks_raw and curr_masks_raw to MASt3R feature
+            # map resolution; add batch dimension
+
+            # If both mask sets are non-empty:
+            #   call model.infer_unified(prev_frame_obj, frame,
+            #                            masks_i, masks_j)
+            #   -> (X, C, D, Q), match_result
+            #   store result in SegmentationStore keyed by (i-1, i)
+            #   log match count
+            # Else (one side has no masks):
+            #   call model.infer_slam(prev_frame_obj, frame)
+            #   -> X, C, D, Q  (SLAM branch only, no seg result stored)
+            #   log skip reason
+
+            # Call tracker.track(frame)
+            # Note: tracker internally re-decodes (accepted redundancy for now;
+            # future work: pass pre-computed X,C,D,Q directly to skip re-decode)
+            # -> add_new_kf, match_info, try_reloc
+
+            # If try_reloc: set mode -> RELOC
+
+            # Update shared state with current frame
+
+            pass
+
+        # ------------------------------------------------------------ #
+        # RELOC                                                         #
+        # ------------------------------------------------------------ #
+        elif mode == Mode.RELOC:
+            # Run mono inference to update frame pointmap
+            # (segmentation not used during relocalisation)
+            # Push frame to shared state and queue reloc
+            # If single_thread: spin until backend finishes reloc
+
+            pass
+
+        # ------------------------------------------------------------ #
+        # Post-frame bookkeeping                                        #
+        # ------------------------------------------------------------ #
+
+        # If add_new_kf:
+        #   append frame to keyframes
+        #   queue global optimisation for new keyframe index
+        #   if single_thread: spin until backend finishes
+
+        # Optionally query SegmentationStore for this keyframe pair
+        # and attach semantic labels to the keyframe for downstream use
+
+        # Roll forward:
+        #   prev_frame_obj = frame   (encoder cache carries over)
+        #   prev_masks_raw = curr_masks_raw
+
+        # Log FPS every 30 frames
+
+        i += 1
+
+    # ---------------------------------------------------------------- #
+    # Shutdown                                                          #
+    # ---------------------------------------------------------------- #
+
+    # Save trajectory, reconstruction, and keyframe images if requested
+
+    # Save raw frames to disk if save_frames
+
+    # Join backend and viz processes
+
+    # Print done
