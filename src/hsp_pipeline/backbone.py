@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable
 
 import numpy as np
@@ -17,12 +18,14 @@ from .types import (
     PairwiseBackboneOutput,
     PointMap,
 )
+from .unified_inference import mast3r_unified_inference
 
 
 @dataclass(frozen=True)
 class BackboneConfig:
     mode: str
     factory: str | None
+    model_factory: str | None
     max_image_resolution: int
 
 
@@ -32,6 +35,84 @@ def _load_callable(path: str) -> Callable[..., Any]:
     module_name, func_name = path.split(":", 1)
     module = importlib.import_module(module_name)
     return getattr(module, func_name)
+
+
+def _to_numpy(value: Any) -> np.ndarray:
+    if hasattr(value, "detach"):
+        value = value.detach()
+    if hasattr(value, "cpu"):
+        value = value.cpu()
+    if hasattr(value, "numpy"):
+        value = value.numpy()
+    return np.asarray(value)
+
+
+def _make_frame(rgb: np.ndarray, device: str):
+    import torch
+
+    arr = np.asarray(rgb, dtype=np.float32)
+    tensor = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0).to(device=device)
+    return SimpleNamespace(
+        img=tensor,
+        img_true_shape=tensor.shape[-2:],
+        feat=None,
+        pos=None,
+    )
+
+
+class UnifiedMast3RBackboneAdapter:
+    def __init__(self, model: Any, device: str) -> None:
+        self.model = model
+        self.device = device
+
+    def _frame_result(self, ref: dict[str, Any], alt: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "pointmap": _to_numpy(ref["pts3d"][0]).astype(np.float32),
+            "pointmap_confidence": _to_numpy(ref["conf"][0]).astype(np.float32),
+            "features_v1": _to_numpy(ref["desc"][0]).astype(np.float32),
+            "features_v1_confidence": _to_numpy(ref["desc_conf"][0]).astype(np.float32),
+            "features_v2": _to_numpy(alt["desc"][0]).astype(np.float32),
+            "features_v2_confidence": _to_numpy(alt["desc_conf"][0]).astype(np.float32),
+        }
+
+    def run_pair(self, rgb_i: np.ndarray, rgb_j: np.ndarray) -> dict[str, Any]:
+        frame_i = _make_frame(rgb_i, self.device)
+        frame_j = _make_frame(rgb_j, self.device)
+        out = mast3r_unified_inference(self.model, frame_i, frame_j)
+        slam = {
+            "X": _to_numpy(out.X).astype(np.float32),
+            "C": _to_numpy(out.C).astype(np.float32),
+            "D": _to_numpy(out.D).astype(np.float32),
+            "Q": _to_numpy(out.Q).astype(np.float32),
+        }
+        seg = {
+            "desc_i": _to_numpy(out.desc_i).astype(np.float32),
+            "desc_j": _to_numpy(out.desc_j).astype(np.float32),
+        }
+        return {
+            "frame_i": self._frame_result(out.res11, out.res12),
+            "frame_j": self._frame_result(out.res21, out.res22),
+            "slam": slam,
+            "seg": seg,
+        }
+
+    def run_single(self, rgb: np.ndarray) -> dict[str, Any]:
+        return self.run_pair(rgb, rgb)["frame_i"]
+
+
+def create_mast3r_backbone(*_args: Any, **_kwargs: Any):
+    config = _kwargs.get("config", {})
+    checkpoints = _kwargs.get("checkpoints", {})
+    device = str(_kwargs.get("device", "cuda"))
+    fp16 = bool(_kwargs.get("fp16", False))
+    model_factory = config.get("model_factory")
+    if not model_factory:
+        raise RuntimeError(
+            "MASt3R backbone model_factory not configured. Set backbone.model_factory to a model loader callable."
+        )
+    loader = _load_callable(str(model_factory))
+    model = loader(checkpoints=checkpoints, device=device, fp16=fp16, config=config)
+    return UnifiedMast3RBackboneAdapter(model=model, device=device)
 
 
 def _load_rgb(path: Path, max_image_resolution: int) -> np.ndarray:
@@ -129,7 +210,10 @@ def _run_mast3r_backbone(frames: list[FrameRecord], cfg: BackboneConfig, checkpo
             "MASt3R backbone factory not configured. Set backbone.factory to a callable module:function."
         )
     factory = _load_callable(cfg.factory)
-    adapter = factory(checkpoints=checkpoints, device=device, fp16=fp16, config={"max_image_resolution": cfg.max_image_resolution})
+    adapter_config: dict[str, Any] = {"max_image_resolution": cfg.max_image_resolution}
+    if cfg.model_factory:
+        adapter_config["model_factory"] = cfg.model_factory
+    adapter = factory(checkpoints=checkpoints, device=device, fp16=fp16, config=adapter_config)
     outputs: dict[tuple[int, int], BackboneFrameOutput] = {}
     pairs: list[tuple[FrameRecord, FrameRecord]] = []
     pairwise_outputs: list[PairwiseBackboneOutput] = []
@@ -171,9 +255,10 @@ def run_backbone(frames: list[FrameRecord], cfg: dict[str, Any], memory_cfg: dic
         cfg_max_res = memory_cfg.get("max_image_resolution")
     max_res = int(cfg_max_res) if cfg_max_res is not None else 0
     factory = cfg.get("factory")
+    model_factory = cfg.get("model_factory")
     device = str(cfg.get("device", memory_cfg.get("device", "cuda")))
     fp16 = bool(cfg.get("fp16", memory_cfg.get("fp16", False)))
-    backbone_cfg = BackboneConfig(mode=mode, factory=factory, max_image_resolution=max_res)
+    backbone_cfg = BackboneConfig(mode=mode, factory=factory, model_factory=model_factory, max_image_resolution=max_res)
     if mode == "stub":
         return _run_stub_backbone(frames, backbone_cfg)
     if mode != "mast3r":
