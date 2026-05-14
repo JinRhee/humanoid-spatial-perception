@@ -86,130 +86,207 @@ def _instances_to_ply(instances, path: Path) -> None:
         all_rgb.append(np.tile(color[None, :], (pts.shape[0], 1)))
     write_ply_xyzrgb(path, np.concatenate(all_pts, axis=0), np.concatenate(all_rgb, axis=0))
 
+import argparse
+import torch
+import torch.multiprocessing as mp
 
-
-def run_pipeline(images_dir: Path, config_path: Path, output_dir: Path, preset: str | None) -> None:
-    return
-
-# ------------------------------------------------------------------ #
-# Entry point                                                         #
-# ------------------------------------------------------------------ #
 
 if __name__ == "__main__":
     mp.set_start_method("spawn")
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.set_grad_enabled(False)
 
-    # Parse arguments: dataset, config, calib, no-viz,
-    # and segmentation hyperparams (conf, iou, imgsz)
+    # ---------------------------------------------------------------- #
+    # Arguments                                                         #
+    # ---------------------------------------------------------------- #
+
+    # --dataset       path to image sequence
+    # --config        path to SLAM yaml config
+    # --calib         optional calibration yaml
+    # --no-viz        disable visualisation process
+    # --save-as       output name
+    # --seg-conf      FastSAM confidence threshold  (default 0.3)
+    # --seg-iou       FastSAM IoU threshold         (default 0.4)
+    # --seg-imgsz     FastSAM input resolution      (default 768)
+
+    # ---------------------------------------------------------------- #
+    # SLAM setup                                                        #
+    # ---------------------------------------------------------------- #
 
     # Load SLAM config from yaml
 
+    # Create mp.Manager and main<->viz queues
+
+    # Load dataset; subsample per config
+
+    # Apply calibration if --calib provided
+
+    # Create SharedKeyframes and SharedStates (h, w from dataset)
+
     # ---------------------------------------------------------------- #
-    # Setup                                                             #
+    # Model                                                             #
     # ---------------------------------------------------------------- #
-
-    # Create multiprocessing manager and queues (main<->viz)
-
-    # Load dataset and subsample per config
-
-    # Apply calibration if provided
-
-    # Create SharedKeyframes and SharedStates
 
     # Build UnifiedMASt3RInfer:
-    #   - load AsymmetricMASt3R weights into model.encoder
-    #   - call model.prepare(device)
-    #   - call model.share_memory() so backend process can access encoder
+    #   load AsymmetricMASt3R weights into model.encoder
+    #   call model.prepare(device)
+    #   call model.share_memory()
 
-    # Pass model.encoder (not model) to FrameTracker, so the tracker's
-    # internal mast3r_match_symmetric uses the same weights
+    # Build FrameTracker with model.encoder
+    # (tracker calls mast3r_match_asymmetric on model.encoder directly;
+    #  passing model.encoder rather than model keeps that interface intact)
 
-    # Instantiate FastSAM segmentation pipeline (main process only)
+    # ---------------------------------------------------------------- #
+    # FastSAM setup                                                     #
+    # ---------------------------------------------------------------- #
 
-    # Instantiate SegmentationStore (main process only)
+    # Load FastSAM model from checkpoint path (vanilla ultralytics)
+    # No wrapper class — call model(image, ...) directly in the loop
 
-    # Set up calibration matrix K if use_calib
+    # ---------------------------------------------------------------- #
+    # Segmentation store and instance tracker                           #
+    # ---------------------------------------------------------------- #
 
-    # Clean up any previous trajectory / reconstruction files
+    # Instantiate SegmentationStore (keyed by frame index pair)
+
+    # Instantiate InstanceTracker with merge weights, thresholds,
+    # ema_decay, resweep_interval from config
+
+    # ---------------------------------------------------------------- #
+    # Calibration matrix                                                #
+    # ---------------------------------------------------------------- #
+
+    # If use_calib: build K tensor and pass to SharedKeyframes
+
+    # ---------------------------------------------------------------- #
+    # Clean up previous results                                         #
+    # ---------------------------------------------------------------- #
+
+    # Remove stale trajectory / reconstruction files if dataset.save_results
 
     # ---------------------------------------------------------------- #
     # Spawn processes                                                   #
     # ---------------------------------------------------------------- #
 
     # Spawn viz process if not --no-viz
+    #   args: config, states, keyframes, main2viz, viz2main
 
-    # Spawn backend process:
-    #   - pass model.encoder so FactorGraph and retrieval database
-    #     use the same weights without re-loading
-
-    # ---------------------------------------------------------------- #
-    # Seed frame 0 before the loop                                      #
-    # ---------------------------------------------------------------- #
-
-    # Load frame 0 image from dataset
-    # Run FastSAM on frame 0 -> prev_masks_raw
-    # Store raw image as prev_img_np
-    # prev_frame_obj = None (SLAM frame not created until INIT fires)
+    # Spawn backend process
+    #   args: config, model.encoder, states, keyframes, K
+    #   (backend uses model.encoder for FactorGraph and retrieval;
+    #    it has no knowledge of segmentation)
 
     # ---------------------------------------------------------------- #
-    # Main tracking loop                                                #
+    # Seed frame 0                                                      #
+    # ---------------------------------------------------------------- #
+
+    # Load image 0 from dataset -> prev_img_np
+
+    # Run FastSAM on prev_img_np:
+    #   results = fastsam_model(prev_img_np, conf=..., iou=..., imgsz=...)
+    #   prev_masks_raw = results[0].masks.data  (N, H, W) uint8 on device
+    #   if no masks: prev_masks_raw = empty tensor (0, H, W)
+
+    # prev_frame_obj = None  (SLAM frame created inside loop at i=0)
+
+    # ---------------------------------------------------------------- #
+    # Tracking loop                                                     #
     # ---------------------------------------------------------------- #
 
     i = 0
     while True:
 
-        # Check viz messages; handle pause / terminate signals
+        # Poll viz queue; update last_msg
+        # Handle terminate signal -> break
+        # Handle pause signal -> sleep and continue
 
-        # Break if all frames consumed
+        # Break if i == len(dataset)
 
-        # Load current frame (timestamp, image) from dataset
+        # Load (timestamp, img) from dataset[i]
+        # curr_img_np = (img * 255).clip(0,255).astype(uint8)
 
-        # Run FastSAM on current image -> curr_masks_raw
-        # (always run, even in RELOC, so masks are ready if mode changes)
+        # Run FastSAM on curr_img_np:
+        #   results = fastsam_model(curr_img_np, conf=..., iou=..., imgsz=...)
+        #   curr_masks_raw = results[0].masks.data  (N, H, W) uint8 on device
+        #   if no masks: curr_masks_raw = empty tensor (0, H, W)
 
-        # Create SLAM frame object (pose, image, true_shape, feat=None, pos=None)
+        # Create SLAM frame object via create_frame(i, img, T_WC, ...)
+        # T_WC = Sim3.Identity if i==0 else states.get_frame().T_WC
 
         # ------------------------------------------------------------ #
-        # INIT                                                          #
+        # INIT (i == 0)                                                 #
         # ------------------------------------------------------------ #
         if mode == Mode.INIT:
-            # Run mono inference to bootstrap pointmap (no pair yet)
-            # Append frame to keyframes
-            # Queue global optimisation for frame 0
-            # Set mode -> TRACKING
-            # Cache frame as prev_frame_obj
-            # Cache curr_masks_raw as prev_masks_raw
-            # Advance i; continue
+            # mast3r_inference_mono -> X_init, C_init
+            # frame.update_pointmap(X_init, C_init)
+            # keyframes.append(frame)
+            # states.queue_global_optimization(0)
+            # states.set_mode(TRACKING)
+            # states.set_frame(frame)
 
+            # Cache:
+            #   prev_frame_obj = frame
+            #   prev_masks_raw = curr_masks_raw
+            #   (prev_img_np already set before loop)
+
+            # i += 1; continue
             pass
 
         # ------------------------------------------------------------ #
         # TRACKING                                                      #
         # ------------------------------------------------------------ #
         elif mode == Mode.TRACKING:
-            # Resize prev_masks_raw and curr_masks_raw to MASt3R feature
-            # map resolution; add batch dimension
 
-            # If both mask sets are non-empty:
-            #   call model.infer_unified(prev_frame_obj, frame,
-            #                            masks_i, masks_j)
-            #   -> (X, C, D, Q), match_result
-            #   store result in SegmentationStore keyed by (i-1, i)
-            #   log match count
+            # -- Unified inference --
+
+            # Resize prev_masks_raw and curr_masks_raw to MASt3R
+            # feature map resolution (H_feat, W_feat from prev_frame_obj.img)
+            # Add batch dim -> (1, N, H_feat, W_feat)
+
+            # If both mask tensors are non-empty:
+            #   (X, C, D, Q), match_result, agg_desc_i, agg_desc_j =
+            #       model.infer_unified(prev_frame_obj, frame,
+            #                          masks_i, masks_j)
+            #
+            #   Note: infer_unified must be extended to also return
+            #   agg_desc_i and agg_desc_j (pooled per-mask descriptors)
+            #   so that SegmentRecord.descriptor can be filled without
+            #   a second forward pass
+            #
+            #   Store in SegmentationStore keyed by (i-1, i)
+
             # Else (one side has no masks):
-            #   call model.infer_slam(prev_frame_obj, frame)
-            #   -> X, C, D, Q  (SLAM branch only, no seg result stored)
-            #   log skip reason
+            #   X, C, D, Q = model.infer_slam(prev_frame_obj, frame)
+            #   Skip seg store and instance tracker for this pair
 
-            # Call tracker.track(frame)
-            # Note: tracker internally re-decodes (accepted redundancy for now;
-            # future work: pass pre-computed X,C,D,Q directly to skip re-decode)
-            # -> add_new_kf, match_info, try_reloc
+            # -- Build SegmentRecords for current frame --
 
-            # If try_reloc: set mode -> RELOC
+            # For each mask k in curr_masks_raw:
+            #   pixel_indices = curr_masks_raw[k] > 0
+            #   points_3d    = X[0][pixel_indices]  (res11 pointcloud,
+            #                                        same direction as seg branch)
+            #   mast3r_conf  = C[0][pixel_indices]
+            #   descriptor   = agg_desc_j[0, :, k]  (24-dim pooled, from seg branch)
+            #   centroid_xyz = points_3d.mean(0)
+            #   bbox_min/max = points_3d.min/max(0)
+            #   canonical_label = None  (FastSAM is class-agnostic;
+            #                           label assignment is a future step
+            #                           when SAM3 replaces FastSAM)
+            #   sam3_score   = 1.0      (placeholder; FastSAM gives no
+            #                           per-class score)
+            #   Build SegmentRecord from above fields
 
-            # Update shared state with current frame
+            # -- Update instance tracker --
+            # instance_tracker.update_frame(segment_records, i)
+
+            # -- SLAM tracking (always runs) --
+            # add_new_kf, match_info, try_reloc = tracker.track(frame)
+            # Note: tracker re-runs its own asymmetric decode internally.
+            # Encoder cache on frame means _encode_image is skipped.
+            # Accepted redundancy for now; future: pass X,C,Q directly.
+
+            # if try_reloc: states.set_mode(RELOC)
+            # states.set_frame(frame)
 
             pass
 
@@ -217,11 +294,12 @@ if __name__ == "__main__":
         # RELOC                                                         #
         # ------------------------------------------------------------ #
         elif mode == Mode.RELOC:
-            # Run mono inference to update frame pointmap
-            # (segmentation not used during relocalisation)
-            # Push frame to shared state and queue reloc
-            # If single_thread: spin until backend finishes reloc
-
+            # mast3r_inference_mono -> X, C
+            # frame.update_pointmap(X, C)
+            # states.set_frame(frame)
+            # states.queue_reloc()
+            # if single_thread: spin until backend finishes reloc
+            # (no segmentation during reloc)
             pass
 
         # ------------------------------------------------------------ #
@@ -229,15 +307,12 @@ if __name__ == "__main__":
         # ------------------------------------------------------------ #
 
         # If add_new_kf:
-        #   append frame to keyframes
-        #   queue global optimisation for new keyframe index
+        #   keyframes.append(frame)
+        #   states.queue_global_optimization(len(keyframes) - 1)
         #   if single_thread: spin until backend finishes
 
-        # Optionally query SegmentationStore for this keyframe pair
-        # and attach semantic labels to the keyframe for downstream use
-
-        # Roll forward:
-        #   prev_frame_obj = frame   (encoder cache carries over)
+        # Roll forward (critical for encoder cache):
+        #   prev_frame_obj = frame
         #   prev_masks_raw = curr_masks_raw
 
         # Log FPS every 30 frames
@@ -248,9 +323,12 @@ if __name__ == "__main__":
     # Shutdown                                                          #
     # ---------------------------------------------------------------- #
 
-    # Save trajectory, reconstruction, and keyframe images if requested
+    # instance_tracker.final_split() -> keep, low
+    # Log or save global instances in keep
 
-    # Save raw frames to disk if save_frames
+    # Save trajectory, reconstruction, keyframes if dataset.save_results
+
+    # Save raw frames if save_frames
 
     # Join backend and viz processes
 
