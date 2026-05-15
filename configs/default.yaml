@@ -5,7 +5,8 @@ paths:
   checkpoints:
     fastsam:          external/segmast3r/checkpoints/ultralytics/FastSAM-x.pt
     mast3r_retrieval: external/MASt3R-SLAM/checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth
-
+    mast3r_original: external/MASt3R-SLAM/checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth
+    segmast3r_head: external/segmast3r/checkpoints/heads_only.pt
 # ------------------------------------------------------------------ #
 # Dataset                                                             #
 # ------------------------------------------------------------------ #
@@ -13,12 +14,6 @@ dataset:
   path:    datasets/tum/rgbd_dataset_freiburg1_desk
   save_as: default
   calib:   ""
-
-# ------------------------------------------------------------------ #
-# SegMASt3R                                                            #
-# ------------------------------------------------------------------ #
-segmast3r:
-  data_source: scannetpp  # controls architecture params
 
 # ------------------------------------------------------------------ #
 # SLAM                                                                #

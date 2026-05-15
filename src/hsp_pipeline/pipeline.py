@@ -1,5 +1,6 @@
 import argparse
 import datetime
+import os
 import pathlib
 import sys
 import time
@@ -240,7 +241,8 @@ def run_pipeline(args):
 
     # Unified MASt3R Infer
     model = UnifiedMASt3RInfer(
-        data_source=app_config.get("segmast3r", {}).get("data_source", "scannetpp")
+        mast3r_ckpt=app_config["paths"]["checkpoints"]["mast3r_original"],
+        segmast3r_ckpt=app_config["paths"]["checkpoints"]["segmast3r_head"],
     )
     model.prepare(device)
     model.share_memory()
@@ -256,7 +258,7 @@ def run_pipeline(args):
     # ---------------------------------------------------------------
 
     # FrameTracker
-    tracker = FrameTracker(model.encoder, keyframes, device)
+    tracker = FrameTracker(model.mast3r, keyframes, device)
     last_msg = WindowMsg()
 
     # SegmentationStore
@@ -274,7 +276,7 @@ def run_pipeline(args):
     torch.serialization.add_safe_globals([argparse.Namespace])
     
     retrieval_path = str(Path(app_config["paths"]["checkpoints"]["mast3r_retrieval"]).resolve())
-    backend = mp.Process(target=run_backend, args=(config, model.encoder, states, keyframes, K, retrieval_path))
+    backend = mp.Process(target=run_backend, args=(config, model.mast3r, states, keyframes, K, retrieval_path))
     backend.start()
 
     # ---------------------------------------------------------------
@@ -336,7 +338,7 @@ def run_pipeline(args):
 
         if mode == Mode.INIT:
             # Initialize via mono inference, and encoded features neeed for database
-            X_init, C_init = mast3r_inference_mono(model.encoder, frame)
+            X_init, C_init = mast3r_inference_mono(model.mast3r, frame)
             frame.update_pointmap(X_init, C_init)
             keyframes.append(frame)
             states.queue_global_optimization(len(keyframes) - 1)
@@ -374,7 +376,11 @@ def run_pipeline(args):
             # -- Unified inference --
             if masks_i.shape[1] > 0 and masks_j.shape[1] > 0:
                 (X, C, D, Q), match_result, agg_desc_i, agg_desc_j = model.infer_unified(
-                    prev_frame_obj, frame, masks_i, masks_j
+                    prev_frame_obj,
+                    frame,
+                    masks_i,
+                    masks_j,
+                    debug=os.environ.get("HSP_DEBUG_UNIFIED", "0") == "1",
                 )
 
                 # -- Build SegmentRecords for current frame --
@@ -397,8 +403,10 @@ def run_pipeline(args):
                 )
 
                 # -- Store results --
+                match_result_cpu = match_result[0].detach().cpu().numpy()
                 seg_store.add_segments(i, segment_records)
-                seg_store.add_match_result(i - 1, i, match_result[0].cpu().numpy())
+                seg_store.add_match_result(i - 1, i, match_result_cpu)
+                print(match_result_cpu)
 
                 # -- Update instance tracker --
                 prev_match_result = seg_store.get_match_result(i - 1, i)
@@ -411,7 +419,7 @@ def run_pipeline(args):
                 print(
                     f"[seg] {i-1}->{i} | "
                     f"masks: {masks_i.shape[1]}/{masks_j.shape[1]} | "
-                    f"matches: {(match_result >= 0).sum().item()} | "
+                    f"matches: {np.sum(match_result_cpu >= 0)} | "
                     f"instances: {len(instance_tracker.instances)}"
                 )
 
@@ -432,7 +440,7 @@ def run_pipeline(args):
             prev_masks_raw = curr_masks_raw
 
         elif mode == Mode.RELOC:
-            X, C = mast3r_inference_mono(model.encoder, frame)
+            X, C = mast3r_inference_mono(model.mast3r, frame)
             frame.update_pointmap(X, C)
             states.set_frame(frame)
             states.queue_reloc()
