@@ -30,7 +30,7 @@ from mast3r_slam.tracker import FrameTracker
 from mast3r_slam.visualization import WindowMsg, run_visualization
 
 from .unified_inference import UnifiedMASt3RInfer
-from .instance_tracker import (
+from .instance_tracker_new import (
     InstanceTracker,
     SegmentationStore,
     build_segment_records,
@@ -91,7 +91,7 @@ def build_instance_color_image(segments, masks, height: int, width: int) -> np.n
     color_image = np.zeros((height, width, 3), dtype=np.float32)
     masks_np = masks[0].detach().cpu().numpy() if hasattr(masks, "detach") else np.asarray(masks)
     for segment in segments:
-        if segment.instance_id is None:
+        if segment.instance_id is None or not getattr(segment, "is_matched", False):
             continue
         if segment.mask_id < 0 or segment.mask_id >= masks_np.shape[0]:
             continue
@@ -350,6 +350,8 @@ def run_pipeline(args):
         if save_frames:
             frames.append(img)
 
+        instance_color_image = None
+
         # get frames last camera pose
         T_WC = (
             lietorch.Sim3.Identity(1, device=device)
@@ -366,7 +368,6 @@ def run_pipeline(args):
             states.queue_global_optimization(len(keyframes) - 1)
             states.set_mode(Mode.TRACKING)
             states.set_frame(frame)
-            main2viz.put({"frame_index": i, "point_colors": None})
 
             prev_frame_obj = frame
             i += 1
@@ -457,13 +458,13 @@ def run_pipeline(args):
                     f"[seg] {i-1}->{i} | "
                     f"masks: {masks_i.shape[1]}/{masks_j.shape[1]} | "
                     f"matches: {np.sum(match_result_cpu >= 0)} | "
-                    f"instances: {len(instance_tracker.instances)}"
+                    f"instances: {len(instance_tracker.valid_instances)} | "
+                    f"candidates: {len(instance_tracker.candidate_instances)}"
                 )
 
             else:
                 # No masks on one or both sides — SLAM only, no seg update
                 print(f"[seg] {i-1}->{i} | skipped (masks: {masks_i.shape[1]}/{masks_j.shape[1]})")
-                main2viz.put({"frame_index": i, "point_colors": None})
 
             # -- SLAM tracking (always runs) --
             # Note: tracker internally re-decodes via mast3r_match_asymmetric.
@@ -482,7 +483,6 @@ def run_pipeline(args):
             frame.update_pointmap(X, C)
             states.set_frame(frame)
             states.queue_reloc()
-            main2viz.put({"frame_index": i, "point_colors": None})
             # In single threaded mode, make sure relocalization happen for every frame
             while config["single_thread"]:
                 with states.lock:
@@ -496,6 +496,14 @@ def run_pipeline(args):
         if add_new_kf:
             keyframes.append(frame)
             states.queue_global_optimization(len(keyframes) - 1)
+            if instance_color_image is not None:
+                main2viz.put(
+                    {
+                        "frame_index": i,
+                        "keyframe_frame_id": int(frame.frame_id),
+                        "keyframe_point_colors": instance_color_image,
+                    }
+                )
             # In single threaded mode, wait for the backend to finish
             while config["single_thread"]:
                 with states.lock:
