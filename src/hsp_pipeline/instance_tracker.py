@@ -121,6 +121,45 @@ def _bbox_iou(min_a: np.ndarray, max_a: np.ndarray, min_b: np.ndarray, max_b: np
     return inter_vol / denom
 
 
+BOX_EDGES = np.array(
+    [
+        [0, 1], [0, 2], [1, 3], [2, 3],
+        [4, 5], [4, 6], [5, 7], [6, 7],
+        [0, 4], [1, 5], [2, 6], [3, 7],
+    ],
+    dtype=np.int32,
+)
+
+
+def bbox_iou(min_a: np.ndarray, max_a: np.ndarray, min_b: np.ndarray, max_b: np.ndarray) -> float:
+    return _bbox_iou(min_a, max_a, min_b, max_b)
+
+
+def bbox_corners(bbox_min: np.ndarray, bbox_max: np.ndarray) -> np.ndarray:
+    bbox_min = np.asarray(bbox_min, dtype=np.float32)
+    bbox_max = np.asarray(bbox_max, dtype=np.float32)
+    return np.array(
+        [
+            [bbox_min[0], bbox_min[1], bbox_min[2]],
+            [bbox_max[0], bbox_min[1], bbox_min[2]],
+            [bbox_min[0], bbox_max[1], bbox_min[2]],
+            [bbox_max[0], bbox_max[1], bbox_min[2]],
+            [bbox_min[0], bbox_min[1], bbox_max[2]],
+            [bbox_max[0], bbox_min[1], bbox_max[2]],
+            [bbox_min[0], bbox_max[1], bbox_max[2]],
+            [bbox_max[0], bbox_max[1], bbox_max[2]],
+        ],
+        dtype=np.float32,
+    )
+
+
+def instance_rgba(instance_id: int, alpha: float = 1.0) -> np.ndarray:
+    seed = int(np.uint32(instance_id) * np.uint32(2654435761))
+    rng = np.random.default_rng(seed)
+    rgb = rng.uniform(0.35, 0.95, size=3).astype(np.float32)
+    return np.concatenate([rgb, np.array([alpha], dtype=np.float32)])
+
+
 def build_segment_records(
     frame_index: int,
     masks,
@@ -263,9 +302,19 @@ class InstanceTracker:
                 if instance_id is None:
                     instance_id = self._create_instance(seg, frame_index)
                 else:
-                    self._update_instance(self.instances[instance_id], seg, frame_index, best_score)
+                    # Defensive: if the chosen instance_id was removed (e.g. during resweep),
+                    # recreate a new instance to avoid KeyError and continue tracking.
+                    if instance_id not in self.instances:
+                        instance_id = self._create_instance(seg, frame_index)
+                        self._update_instance(self.instances[instance_id], seg, frame_index, best_score)
+                    else:
+                        self._update_instance(self.instances[instance_id], seg, frame_index, best_score)
             else:
-                self._update_instance(self.instances[instance_id], seg, frame_index, None)
+                if instance_id not in self.instances:
+                    # Previously assigned instance id no longer exists; create replacement
+                    instance_id = self._create_instance(seg, frame_index)
+                else:
+                    self._update_instance(self.instances[instance_id], seg, frame_index, None)
             seg.instance_id = instance_id
 
         self._prev_segments = segments

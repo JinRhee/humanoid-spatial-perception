@@ -30,7 +30,14 @@ from mast3r_slam.tracker import FrameTracker
 from mast3r_slam.visualization import WindowMsg, run_visualization
 
 from .unified_inference import UnifiedMASt3RInfer
-from .instance_tracker import InstanceTracker, SegmentationStore, build_segment_records, MergeWeights, SegmentRecord
+from .instance_tracker import (
+    InstanceTracker,
+    SegmentationStore,
+    build_segment_records,
+    MergeWeights,
+    SegmentRecord,
+    instance_rgba,
+)
 from .segmentor import SegmentationPipeline
 from .config import load_pipeline_config, overrides_from_args
 
@@ -78,6 +85,21 @@ def relocalization(frame, keyframes, factor_graph, retrieval_database):
             else:
                 factor_graph.solve_GN_rays()
         return successful_loop_closure
+
+
+def build_instance_color_image(segments, masks, height: int, width: int) -> np.ndarray:
+    color_image = np.zeros((height, width, 3), dtype=np.float32)
+    masks_np = masks[0].detach().cpu().numpy() if hasattr(masks, "detach") else np.asarray(masks)
+    for segment in segments:
+        if segment.instance_id is None:
+            continue
+        if segment.mask_id < 0 or segment.mask_id >= masks_np.shape[0]:
+            continue
+        mask = masks_np[segment.mask_id] > 0
+        if not np.any(mask):
+            continue
+        color_image[mask] = instance_rgba(segment.instance_id, alpha=1.0)[:3]
+    return np.ascontiguousarray(color_image)
 
 
 def run_backend(cfg, model, states, keyframes, K, retrieval_path):
@@ -344,6 +366,7 @@ def run_pipeline(args):
             states.queue_global_optimization(len(keyframes) - 1)
             states.set_mode(Mode.TRACKING)
             states.set_frame(frame)
+            main2viz.put({"frame_index": i, "point_colors": None})
 
             prev_frame_obj = frame
             i += 1
@@ -416,6 +439,20 @@ def run_pipeline(args):
                     match_result=prev_match_result,
                 )
 
+                instance_color_image = build_instance_color_image(
+                    segment_records,
+                    masks_j,
+                    H_feat,
+                    W_feat,
+                )
+                main2viz.put(
+                    {
+                        "frame_index": i,
+                        "instances": instance_tracker.summaries(),
+                        "point_colors": instance_color_image,
+                    }
+                )
+
                 print(
                     f"[seg] {i-1}->{i} | "
                     f"masks: {masks_i.shape[1]}/{masks_j.shape[1]} | "
@@ -426,6 +463,7 @@ def run_pipeline(args):
             else:
                 # No masks on one or both sides — SLAM only, no seg update
                 print(f"[seg] {i-1}->{i} | skipped (masks: {masks_i.shape[1]}/{masks_j.shape[1]})")
+                main2viz.put({"frame_index": i, "point_colors": None})
 
             # -- SLAM tracking (always runs) --
             # Note: tracker internally re-decodes via mast3r_match_asymmetric.
@@ -444,6 +482,7 @@ def run_pipeline(args):
             frame.update_pointmap(X, C)
             states.set_frame(frame)
             states.queue_reloc()
+            main2viz.put({"frame_index": i, "point_colors": None})
             # In single threaded mode, make sure relocalization happen for every frame
             while config["single_thread"]:
                 with states.lock:
