@@ -9,6 +9,11 @@ SRC_DIR = ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+# Ensure vendored segmast3r package is importable (provides mast3r_src, src, etc.)
+SEG_DIR = ROOT / "external" / "segmast3r"
+if str(SEG_DIR) not in sys.path:
+    sys.path.insert(0, str(SEG_DIR))
+
 from hsp_pipeline.cli import main
 
 
