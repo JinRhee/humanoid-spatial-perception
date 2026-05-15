@@ -6,10 +6,6 @@ from pathlib import Path
 import numpy as np
 
 
-def ensure_dir(path: Path) -> None:
-    path.mkdir(parents=True, exist_ok=True)
-
-
 def write_jsonl(path: Path, rows: list[dict]) -> None:
     with path.open("w", encoding="utf-8") as f:
         for row in rows:

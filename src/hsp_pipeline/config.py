@@ -1,81 +1,77 @@
 from __future__ import annotations
 
-from copy import deepcopy
-from dataclasses import dataclass
+import copy
 from pathlib import Path
 from typing import Any
 
-try:
-    import yaml
-except ImportError as exc:  # pragma: no cover
-    raise RuntimeError("PyYAML is required to load configs/pipeline.yaml") from exc
+import yaml
 
 
-@dataclass(frozen=True)
-class PipelineConfig:
-    raw: dict[str, Any]
-
-    @property
-    def paths(self) -> dict[str, Any]:
-        return self.raw["paths"]
-
-    @property
-    def keyframe(self) -> dict[str, Any]:
-        return self.raw["keyframe"]
-
-    @property
-    def geometry(self) -> dict[str, Any]:
-        return self.raw["geometry"]
-
-    @property
-    def semantics(self) -> dict[str, Any]:
-        return self.raw["semantics"]
-
-    @property
-    def fusion(self) -> dict[str, Any]:
-        return self.raw["fusion"]
-
-    @property
-    def memory(self) -> dict[str, Any]:
-        return self.raw["memory"]
-
-
-def _deep_update(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
-    out = deepcopy(base)
-    for k, v in patch.items():
-        if isinstance(v, dict) and isinstance(out.get(k), dict):
-            out[k] = _deep_update(out[k], v)
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Recursively merge override into base. Override wins on conflict."""
+    result = copy.deepcopy(base)
+    for key, val in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(val, dict):
+            result[key] = _deep_merge(result[key], val)
         else:
-            out[k] = deepcopy(v)
-    return out
+            result[key] = copy.deepcopy(val)
+    return result
 
 
-def load_config(config_path: Path, preset: str | None) -> PipelineConfig:
-    with config_path.open("r", encoding="utf-8") as f:
-        raw = yaml.safe_load(f) or {}
+def load_pipeline_config(
+    config_path: str | Path,
+    preset: str | None = None,
+    overrides: dict[str, Any] | None = None,
+) -> dict:
+    """
+    Load the pipeline config yaml, apply an optional preset, then
+    apply any programmatic overrides from CLI args.
 
-    required_top = {"paths", "keyframe", "geometry", "semantics", "fusion", "memory", "presets"}
-    missing = required_top.difference(raw)
-    if missing:
-        raise ValueError(f"Config missing top-level sections: {sorted(missing)}")
+    Returns a dict named pipeline_cfg in calling scope to avoid
+    shadowing MASt3R-SLAM's module-level `config` global.
+    """
+    config_path = Path(config_path)
+    with config_path.open("r") as f:
+        pipeline_cfg = yaml.safe_load(f)
 
-    resolved = _deep_update(raw, raw["presets"].get("balanced", {}))
-    if preset:
-        if preset not in raw["presets"]:
-            raise ValueError(f"Unknown preset '{preset}'. Available: {sorted(raw['presets'])}")
-        resolved = _deep_update(resolved, raw["presets"][preset])
+    if preset is not None:
+        presets = pipeline_cfg.get("presets", {})
+        if preset not in presets:
+            raise ValueError(
+                f"Unknown preset '{preset}'. "
+                f"Available: {list(presets.keys())}"
+            )
+        pipeline_cfg = _deep_merge(pipeline_cfg, presets[preset])
 
-    return PipelineConfig(raw=resolved)
+    pipeline_cfg.pop("presets", None)
+
+    if overrides:
+        pipeline_cfg = _deep_merge(pipeline_cfg, overrides)
+
+    return pipeline_cfg
 
 
-def read_yaml_file(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
-        if not isinstance(data, dict):
-            raise ValueError(f"Expected YAML mapping at {path}")
-        return data
+def overrides_from_args(args) -> dict:
+    """
+    Build an overrides dict from parsed CLI args.
+    Only includes keys that differ from their argparse defaults,
+    so yaml values are not silently clobbered by unfired defaults.
+    """
+    overrides: dict = {}
 
+    if args.dataset:
+        overrides.setdefault("dataset", {})["path"] = str(args.dataset)
+    if args.calib:
+        overrides.setdefault("dataset", {})["calib"] = str(args.calib)
+    if getattr(args, "save_as", None) and args.save_as != "default":
+        overrides.setdefault("dataset", {})["save_as"] = args.save_as
+    if getattr(args, "no_viz", False):
+        overrides.setdefault("slam", {})["no_viz"] = True
+    if getattr(args, "seg_conf", None) is not None:
+        overrides.setdefault("segmentation", {})["conf"] = args.seg_conf
+    if getattr(args, "seg_iou", None) is not None:
+        overrides.setdefault("segmentation", {})["iou"] = args.seg_iou
+    if getattr(args, "seg_imgsz", None) is not None:
+        overrides.setdefault("segmentation", {})["imgsz"] = args.seg_imgsz
 
-def dump_yaml_file(path: Path, data: dict[str, Any]) -> None:
-    with path.open("w", encoding="utf-8") as f:
-        yaml.safe_dump(data, f, sort_keys=False)
+    return overrides
