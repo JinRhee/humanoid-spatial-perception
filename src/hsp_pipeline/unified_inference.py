@@ -4,20 +4,32 @@ import mast3r.model as mast3r_model
 
 from mast3r_slam.config import config
 import mast3r_slam.matching as matching
-from src.models.mast3r_segfeat.diff_feature_matcher import featureMatcher
-from src.models.mast3r_segfeat.diff_masked_pooling import masked_average_pooling
+from external.segmast3r.src.models.mast3r_segfeat.diff_feature_matcher import featureMatcher
+from external.segmast3r.src.models.mast3r_segfeat.diff_masked_pooling import masked_average_pooling
 
 
 class UnifiedMASt3RInfer(torch.nn.Module):
-    def __init__(self, cfg):
+    def __init__(
+        self,
+        data_source: str = "scannetpp",
+        feature_matcher_cfg: dict | None = None,
+    ):
         super().__init__()
-        self.cfg = cfg
 
-        model_params = self._get_model_params(cfg)
+        if feature_matcher_cfg is None:
+            feature_matcher_cfg = {
+                "TYPE": "Sinkhorn",
+                "SINKHORN": {
+                    "NUM_IT": 100,
+                    "DUSTBIN_SCORE_INIT": 5.3937,
+                },
+            }
+
+        model_params = self._get_model_params(data_source)
         self.encoder = mast3r_model.AsymmetricMASt3R(**model_params)
 
-        cfg["FEATURE_MATCHER"]["SINKHORN"]["DUSTBIN_SCORE_INIT"] = 5.3937
-        self.feature_matcher = featureMatcher(cfg["FEATURE_MATCHER"])
+        feature_matcher_cfg["SINKHORN"]["DUSTBIN_SCORE_INIT"] = 5.3937
+        self.feature_matcher = featureMatcher(feature_matcher_cfg)
 
         self._configure_grad()
 
@@ -25,7 +37,7 @@ class UnifiedMASt3RInfer(torch.nn.Module):
         self.encoder.requires_grad_(False)
         self.feature_matcher.requires_grad_(False)
 
-    def _get_model_params(self, cfg):
+    def _get_model_params(self, data_source: str):
         base_params = {
             "pos_embed": "RoPE100",
             "patch_embed_cls": "ManyAR_PatchEmbed",
@@ -43,7 +55,7 @@ class UnifiedMASt3RInfer(torch.nn.Module):
             "two_confs": True,
         }
 
-        dataset_type = cfg["DATASET"]["DATA_SOURCE"].lower()
+        dataset_type = data_source.lower()
         if dataset_type == "mapfree" or "hm3d":
             base_params.update({
                 "patch_embed_cls": "PatchEmbedDust3R",
@@ -228,8 +240,10 @@ class UnifiedMASt3RInfer(torch.nn.Module):
         Run both branches from a single MASt3R inference pass.
 
         Returns:
-            slam:  (X, C, D, Q) — for matching.match()
-            seg:   match_result (B, M) — segment correspondences
+            slam: (X, C, D, Q) — for matching.match()
+            seg: match_result (B, M) — segment correspondences
+            agg_desc_i: (B, D, M) pooled per-mask descriptors for frame_i
+            agg_desc_j: (B, D, N) pooled per-mask descriptors for frame_j
         """
         assert hasattr(self, "device"), "Call model.prepare(device) before infer_unified"
 
@@ -246,10 +260,10 @@ class UnifiedMASt3RInfer(torch.nn.Module):
         # -- SegMASt3R branch --
         desc_i = res11["desc"].permute(0, 3, 1, 2)
         desc_j = res21["desc"].permute(0, 3, 1, 2)
-        agg_i  = masked_average_pooling(desc_i, masks_i)
-        agg_j  = masked_average_pooling(desc_j, masks_j)
+        agg_desc_i = masked_average_pooling(desc_i, masks_i)
+        agg_desc_j = masked_average_pooling(desc_j, masks_j)
 
-        log_P_dustb = self.feature_matcher(agg_i, agg_j)
+        log_P_dustb = self.feature_matcher(agg_desc_i, agg_desc_j)
         scores = torch.exp(log_P_dustb)
 
         B, M_p1, N_p1 = scores.shape
@@ -267,4 +281,4 @@ class UnifiedMASt3RInfer(torch.nn.Module):
         valid = is_not_dustbin & is_mutual
         match_result[valid] = ref_to_target[valid]
 
-        return (X, C, D, Q), match_result
+        return (X, C, D, Q), match_result, agg_desc_i, agg_desc_j

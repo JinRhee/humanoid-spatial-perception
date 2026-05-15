@@ -1,0 +1,82 @@
+# ------------------------------------------------------------------ #
+# Paths                                                               #
+# ------------------------------------------------------------------ #
+paths:
+  checkpoints:
+    fastsam:          external/segmast3r/checkpoints/ultralytics/FastSAM-x.pt
+    mast3r_retrieval: external/MASt3R-SLAM/checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth
+
+# ------------------------------------------------------------------ #
+# Dataset                                                             #
+# ------------------------------------------------------------------ #
+dataset:
+  path:    datasets/tum/rgbd_dataset_freiburg1_desk
+  save_as: default
+  calib:   ""
+
+# ------------------------------------------------------------------ #
+# SegMASt3R                                                            #
+# ------------------------------------------------------------------ #
+segmast3r:
+  data_source: scannetpp  # controls architecture params
+
+# ------------------------------------------------------------------ #
+# SLAM                                                                #
+# ------------------------------------------------------------------ #
+slam:
+  config: external/MASt3R-SLAM/config/base.yaml
+  no_viz: false
+
+# ------------------------------------------------------------------ #
+# Segmentation (FastSAM)                                             #
+# ------------------------------------------------------------------ #
+segmentation:
+  conf:  0.3
+  iou:   0.4
+  imgsz: 768
+
+# ------------------------------------------------------------------ #
+# InstanceTracker                                            #
+# ------------------------------------------------------------------ #
+instance_tracker:
+  merge_weights:
+    descriptor: 0.40
+    centroid:   0.25
+    iou:        0.25
+    size:       0.10
+  merge_threshold:        0.55
+  max_centroid_distance:  3.0
+  label_mismatch_penalty: 0.5
+  ema_decay:              0.90
+  min_support_count:      2
+  resweep_interval:       25
+  skip_resweep:           false
+
+# ------------------------------------------------------------------ #
+# Presets                                                             #
+# ------------------------------------------------------------------ #
+presets:
+  quality:
+    segmentation:
+      conf:  0.3
+      iou:   0.4
+      imgsz: 1024
+    fusion:
+      skip_resweep: false
+
+  balanced:
+    segmentation:
+      conf:  0.3
+      iou:   0.4
+      imgsz: 768
+    fusion:
+      skip_resweep: false
+
+  near_realtime:
+    segmentation:
+      conf:  0.4
+      iou:   0.5
+      imgsz: 480
+    fusion:
+      resweep_interval: 0
+      skip_resweep:     true
