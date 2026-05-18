@@ -18,7 +18,6 @@ from pathlib import Path
 from mast3r_slam.global_opt import FactorGraph
 from mast3r_slam.config import load_config, config, set_global_config
 from mast3r_slam.dataloader import Intrinsics, load_dataset
-import mast3r_slam.evaluate as eval
 from mast3r_slam.frame import Mode, SharedKeyframes, SharedStates, create_frame
 from mast3r_slam.mast3r_utils import (
     load_mast3r,
@@ -40,6 +39,7 @@ from .instance_tracker_new import (
 )
 from .segmentor import SegmentationPipeline
 from .config import load_pipeline_config, overrides_from_args
+from . import evaluate as eval
 
 def relocalization(frame, keyframes, factor_graph, retrieval_database):
     # we are adding and then removing from the keyframe, so we need to be careful.
@@ -87,13 +87,15 @@ def relocalization(frame, keyframes, factor_graph, retrieval_database):
         return successful_loop_closure
 
 
-def build_instance_color_image(segments, masks, height: int, width: int) -> np.ndarray:
+def build_instance_color_image(
+    segments, masks, height: int, width: int, valid_instance_ids: set
+) -> np.ndarray:
     color_image = np.zeros((height, width, 3), dtype=np.float32)
-    masks_np = masks[0].detach().cpu().numpy() if hasattr(masks, "detach") else np.asarray(masks)
-    for segment in segments:
-        if segment.instance_id is None or not getattr(segment, "is_matched", False):
-            continue
-        if segment.mask_id < 0 or segment.mask_id >= masks_np.shape[0]:
+    m = masks[0]
+    masks_np = m.detach().cpu().numpy() if hasattr(m, "detach") else np.asarray(m)
+    # Render highest IDs first so the lowest (oldest) ID wins on pixel overlap
+    for segment in sorted(segments, key=lambda s: s.instance_id or -1, reverse=True):
+        if segment.instance_id not in valid_instance_ids:
             continue
         mask = masks_np[segment.mask_id] > 0
         if not np.any(mask):
@@ -305,15 +307,13 @@ def run_pipeline(args):
     # Seed frame 0 before loop
     # ---------------------------------------------------------------
 
-    _, img0 = dataset[0]
-    prev_img_np = (img0 * 255).clip(0, 255).astype(np.uint8)
-    prev_seg_result = segmentor.segment(prev_img_np)
-    prev_masks_raw = (
-        prev_seg_result.masks.data
-        if prev_seg_result.masks is not None
-        else torch.zeros((0, prev_img_np.shape[0], prev_img_np.shape[1]),
-                        dtype=torch.uint8, device=device)
-    )
+    def resize_masks(masks, h, w):
+        if masks.shape[0] == 0:
+            return torch.zeros((0, h, w), dtype=masks.dtype, device=masks.device)
+        return F.interpolate(
+            masks.unsqueeze(1).float(), size=(h, w), mode="nearest"
+        ).squeeze(1)
+
     prev_frame_obj = None   # set after INIT fires on i=0
 
     # ---------------------------------------------------------------
@@ -361,13 +361,73 @@ def run_pipeline(args):
         frame = create_frame(i, img, T_WC, img_size=dataset.img_size, device=device)
 
         if mode == Mode.INIT:
+            prev_img_np = (img * 255).clip(0, 255).astype(np.uint8)
+            prev_seg_result = segmentor.segment(prev_img_np)
+            assert prev_seg_result.masks is not None
+            prev_masks_raw = prev_seg_result.masks.data
+            
             # Initialize via mono inference, and encoded features neeed for database
             X_init, C_init = mast3r_inference_mono(model.mast3r, frame)
+            print(X_init.shape)
             frame.update_pointmap(X_init, C_init)
             keyframes.append(frame)
+
             states.queue_global_optimization(len(keyframes) - 1)
             states.set_mode(Mode.TRACKING)
             states.set_frame(frame)
+
+            # -- Segment frame 0 and initialize instance tracking --
+            _, _, H_feat, W_feat = frame.img.shape
+            points_init = X_init.reshape(H_feat, W_feat, 3)
+            conf_init = C_init.reshape(H_feat, W_feat)
+            masks_0 = resize_masks(prev_masks_raw, H_feat, W_feat).unsqueeze(0)  # (1, M, H, W)
+            
+            # Get 3D points and confidence for segmentation
+            pose_world = frame.T_WC.matrix().squeeze(0).cpu().numpy()  # (4, 4)
+            
+            # Use placeholder descriptors since we only have monocular features in INIT.
+            # Proper bilateral descriptors and matching will begin from frame 1 onwards.
+            num_masks = masks_0.shape[1]
+            placeholder_descriptors = torch.zeros((1, 24, num_masks), device=device, dtype=torch.float32)
+            
+            # Build segment records from frame 0
+            segment_records = build_segment_records(
+                frame_index=0,
+                masks=masks_0,
+                points_3d=points_init,
+                conf=conf_init,
+                descriptors=placeholder_descriptors,
+                pose_world=pose_world,
+                frame_ts=timestamp,
+                label=None,
+                score=1.0,
+            )
+            
+            # Store segments and initialize instance tracking
+            seg_store.add_segments(0, segment_records)
+            instance_tracker.update_frame(
+                segments=segment_records,
+                frame_index=0,
+                match_result=None,  # No matching on frame 0 (no prior frame)
+                masks=masks_0[0],
+            )
+            
+            # Build and send instance color visualization
+            valid_ids = set(instance_tracker.valid_instances.keys())
+            instance_color_image = build_instance_color_image(
+                segment_records,
+                masks_0,
+                H_feat,
+                W_feat,
+                valid_ids,
+            )
+            msg = {
+                "frame_index": 0,
+                "instances": instance_tracker.summaries(),
+                "point_colors": instance_color_image,
+                "keyframe_point_colors": instance_color_image,
+            }
+            main2viz.put(msg)
 
             prev_frame_obj = frame
             i += 1
@@ -377,23 +437,11 @@ def run_pipeline(args):
             # -- Segment current frame --
             curr_img_np = (img * 255).clip(0, 255).astype(np.uint8) # img is in np.float32
             curr_seg_result = segmentor.segment(curr_img_np)
-            curr_masks_raw = (
-                curr_seg_result.masks.data
-                if curr_seg_result.masks is not None
-                else torch.zeros((0, curr_img_np.shape[0], curr_img_np.shape[1]),
-                                dtype=torch.uint8, device=device)
-            )
+            assert curr_seg_result.masks is not None
+            curr_masks_raw = curr_seg_result.masks.data
 
             # -- Resize masks to MASt3R feature map resolution --
             _, _, H_feat, W_feat = prev_frame_obj.img.shape
-
-            def resize_masks(masks, h, w):
-                if masks.shape[0] == 0:
-                    return torch.zeros((0, h, w), dtype=masks.dtype, device=masks.device)
-                return F.interpolate(
-                    masks.unsqueeze(1).float(), size=(h, w), mode="nearest"
-                ).squeeze(1)
-
             masks_i = resize_masks(prev_masks_raw, H_feat, W_feat).unsqueeze(0)  # (1, M, H, W)
             masks_j = resize_masks(curr_masks_raw, H_feat, W_feat).unsqueeze(0)  # (1, N, H, W)
 
@@ -430,7 +478,7 @@ def run_pipeline(args):
                 match_result_cpu = match_result[0].detach().cpu().numpy()
                 seg_store.add_segments(i, segment_records)
                 seg_store.add_match_result(i - 1, i, match_result_cpu)
-                print(match_result_cpu)
+                # print(match_result_cpu)
 
                 # -- Update instance tracker --
                 prev_match_result = seg_store.get_match_result(i - 1, i)
@@ -438,21 +486,26 @@ def run_pipeline(args):
                     segments=segment_records,
                     frame_index=i,
                     match_result=prev_match_result,
+                    masks=masks_j[0],
                 )
 
+                # Resweep before building colors so the image reflects post-merge IDs
+                if i > 0 and i % 3 == 0 and len(instance_tracker.valid_instances) >= 2:
+                    before = len(instance_tracker.valid_instances)
+                    instance_tracker.resweep()
+                    print(f"[resweep] {before} -> {len(instance_tracker.valid_instances)}")
+
+                valid_ids = set(instance_tracker.valid_instances.keys())
                 instance_color_image = build_instance_color_image(
-                    segment_records,
-                    masks_j,
-                    H_feat,
-                    W_feat,
+                    segment_records, masks_j, H_feat, W_feat, valid_ids,
                 )
-                main2viz.put(
-                    {
-                        "frame_index": i,
-                        "instances": instance_tracker.summaries(),
-                        "point_colors": instance_color_image,
-                    }
-                )
+                msg = {
+                    "frame_index": i,
+                    "instances": instance_tracker.summaries(),
+                }
+                if i == 0 or app_config.get("visualization", {}).get("mask_point_colors_every_frame", True):
+                    msg["point_colors"] = instance_color_image
+                main2viz.put(msg)
 
                 print(
                     f"[seg] {i-1}->{i} | "
@@ -461,7 +514,6 @@ def run_pipeline(args):
                     f"instances: {len(instance_tracker.valid_instances)} | "
                     f"candidates: {len(instance_tracker.candidate_instances)}"
                 )
-
             else:
                 # No masks on one or both sides — SLAM only, no seg update
                 print(f"[seg] {i-1}->{i} | skipped (masks: {masks_i.shape[1]}/{masks_j.shape[1]})")
@@ -496,6 +548,14 @@ def run_pipeline(args):
         if add_new_kf:
             keyframes.append(frame)
             states.queue_global_optimization(len(keyframes) - 1)
+            
+            # In single threaded mode, wait for the backend to finish
+            while config["single_thread"]:
+                with states.lock:
+                    if len(states.global_optimizer_tasks) == 0:
+                        break
+                time.sleep(0.01)
+
             if instance_color_image is not None:
                 main2viz.put(
                     {
@@ -504,12 +564,7 @@ def run_pipeline(args):
                         "keyframe_point_colors": instance_color_image,
                     }
                 )
-            # In single threaded mode, wait for the backend to finish
-            while config["single_thread"]:
-                with states.lock:
-                    if len(states.global_optimizer_tasks) == 0:
-                        break
-                time.sleep(0.01)
+
         # log time
         if i % 30 == 0:
             FPS = i / (time.time() - fps_timer)
@@ -528,6 +583,8 @@ def run_pipeline(args):
         eval.save_keyframes(
             save_dir / "keyframes" / seq_name, dataset.timestamps, keyframes
         )
+        eval.save_instances(save_dir, seq_name, instance_tracker)
+
     if save_frames:
         savedir = pathlib.Path(f"logs/frames/{datetime_now}")
         savedir.mkdir(exist_ok=True, parents=True)

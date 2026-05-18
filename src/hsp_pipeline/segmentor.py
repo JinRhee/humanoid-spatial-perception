@@ -41,7 +41,7 @@ class SegmentationPipeline:
         self.last_segments = None
 
         # Set defaults, optionally override from seg_config
-        self.conf = 0.4
+        self.conf = 0.8
         self.iou = 0.9
         self.imgsz = 1024
         

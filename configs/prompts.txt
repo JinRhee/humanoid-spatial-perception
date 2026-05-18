@@ -1,8 +1,0 @@
-wall|structural
-floor|structural
-ceiling|structural
-chair|object
-office chair|object
-table|object
-desk|object
-monitor|object

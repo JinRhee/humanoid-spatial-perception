@@ -26,27 +26,33 @@ slam:
 # Segmentation (FastSAM)                                             #
 # ------------------------------------------------------------------ #
 segmentation:
-  conf:  0.3
-  iou:   0.4
-  imgsz: 768
+  conf:  0.9
+  iou:   0.9
+  imgsz: 702
 
 # ------------------------------------------------------------------ #
 # InstanceTracker                                            #
 # ------------------------------------------------------------------ #
 instance_tracker:
   merge_weights:
-    descriptor: 0.40
+    descriptor: 0.30
     centroid:   0.25
     iou:        0.25
     size:       0.10
-  merge_threshold:        0.55
-  max_centroid_distance:  3.0
-  label_mismatch_penalty: 0.5
-  ema_decay:              0.90
-  min_support_count:      2
-  resweep_interval:       25
-  skip_resweep:           false
+  merge_threshold:               0.75
+  reattach_threshold:            0.40
+  max_centroid_distance:         3.0
+  label_mismatch_penalty:        0.1
+  ema_decay:                     0.85
+  min_support_count:             2
+  skip_resweep:                  false
+  candidate_promotion_threshold: 4
+  candidate_window_size:         10
 
+visualization:
+  # If true, send per-frame instance color overlays to the visualizer.
+  # If false, only keyframes include instance overlays (reduces color churn).
+  mask_point_colors_every_frame: True
 # ------------------------------------------------------------------ #
 # Presets                                                             #
 # ------------------------------------------------------------------ #
