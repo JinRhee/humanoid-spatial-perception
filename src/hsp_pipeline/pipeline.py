@@ -41,6 +41,12 @@ from .segmentor import SegmentationPipeline
 from .config import load_pipeline_config, overrides_from_args
 from . import evaluate as eval
 
+try:
+    import open_clip as _open_clip
+    _OPEN_CLIP_AVAILABLE = True
+except ImportError:
+    _OPEN_CLIP_AVAILABLE = False
+
 def relocalization(frame, keyframes, factor_graph, retrieval_database):
     # we are adding and then removing from the keyframe, so we need to be careful.
     # The lock slows viz down but safer this way...
@@ -102,6 +108,35 @@ def build_instance_color_image(
             continue
         color_image[mask] = instance_rgba(segment.instance_id, alpha=1.0)[:3]
     return np.ascontiguousarray(color_image)
+
+
+def extract_clip_features(img_np, masks_raw, clip_model, clip_preprocess, device):
+    """Return (M, D) float32 CLIP features for each mask, or None if model absent."""
+    if clip_model is None:
+        return None
+    from PIL import Image as _Image
+    H_img, W_img = img_np.shape[:2]
+    crops = []
+    masks_arr = masks_raw.cpu().numpy() if hasattr(masks_raw, "cpu") else np.asarray(masks_raw)
+    for mask in masks_arr:
+        if mask.shape != (H_img, W_img):
+            mask = cv2.resize(mask.astype(np.uint8), (W_img, H_img), interpolation=cv2.INTER_NEAREST).astype(bool)
+        else:
+            mask = mask > 0
+        rows, cols = np.where(mask)
+        if len(rows) == 0:
+            crop_np = np.zeros((8, 8, 3), dtype=np.uint8)
+        else:
+            y1, y2, x1, x2 = int(rows.min()), int(rows.max()), int(cols.min()), int(cols.max())
+            crop_np = img_np[y1:y2 + 1, x1:x2 + 1].copy()
+            crop_np[~mask[y1:y2 + 1, x1:x2 + 1]] = 0
+        crops.append(clip_preprocess(_Image.fromarray(crop_np)))
+    if not crops:
+        return None
+    with torch.no_grad():
+        feats = clip_model.encode_image(torch.stack(crops).to(device))
+        feats = feats / feats.norm(dim=-1, keepdim=True)
+    return feats.float().cpu().numpy()
 
 
 def run_backend(cfg, model, states, keyframes, K, retrieval_path):
@@ -277,6 +312,16 @@ def run_pipeline(args):
         seg_config=app_config.get("segmentation")
     )
 
+    # CLIP (optional — install open-clip-torch to enable)
+    clip_model = clip_preprocess = None
+    if _OPEN_CLIP_AVAILABLE:
+        clip_ckpt = app_config["paths"]["checkpoints"].get("clip") or "laion2b_s34b_b79k"
+        _clip_model, _, clip_preprocess = _open_clip.create_model_and_transforms("ViT-B-32", pretrained=clip_ckpt)
+        clip_model = _clip_model.to(device).eval()
+        print("[CLIP] Loaded ViT-B-32")
+    else:
+        print("[CLIP] open_clip not available; skipping CLIP features. Install: pip install open-clip-torch")
+
     # ---------------------------------------------------------------
     # FrameTracker, SegmentationStore, InstanceTracker
     # ---------------------------------------------------------------
@@ -379,6 +424,7 @@ def run_pipeline(args):
             masks = resize_masks(masks_raw, H_feat, W_feat).unsqueeze(0)
             placeholder_desc = torch.zeros((1, 24, masks.shape[1]), device=device, dtype=torch.float32)
 
+            clip_features_init = extract_clip_features(img_np, masks_raw, clip_model, clip_preprocess, device)
             segment_records = build_segment_records(
                 frame_index=0,
                 masks=masks,
@@ -389,6 +435,7 @@ def run_pipeline(args):
                 frame_ts=timestamp,
                 label=None,
                 score=1.0,
+                clip_features=clip_features_init,
             )
             seg_store.add_segments(0, segment_records)
             instance_tracker.update_frame(segments=segment_records, frame_index=0, masks=masks[0])
@@ -432,6 +479,7 @@ def run_pipeline(args):
                         debug=os.environ.get("HSP_DEBUG_UNIFIED", "0") == "1",
                     )
                     pose_world = frame.T_WC.matrix().squeeze(0).cpu().numpy()
+                    clip_features = extract_clip_features(img_np, curr_masks_raw, clip_model, clip_preprocess, device)
                     segment_records = build_segment_records(
                         frame_index=i,
                         masks=masks_j,
@@ -442,6 +490,7 @@ def run_pipeline(args):
                         frame_ts=timestamp,
                         label=None,
                         score=1.0,
+                        clip_features=clip_features,
                     )
                     match_result_cpu = match_result[0].detach().cpu().numpy()
                     seg_store.add_segments(i, segment_records)

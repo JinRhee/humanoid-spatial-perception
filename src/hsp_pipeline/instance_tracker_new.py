@@ -25,6 +25,7 @@ class SegmentRecord:
     instance_id: int | None = None
     is_matched: bool = False
     frame_ts: float | None = None
+    clip_feature: np.ndarray | None = None
 
     @property
     def size(self) -> np.ndarray:
@@ -55,6 +56,7 @@ class MergeWeights:
     centroid: float
     iou: float
     size: float
+    clip: float = 0.0
 
 
 @dataclass
@@ -72,6 +74,7 @@ class InstanceState:
     keyframes: list[int] = field(default_factory=list)
     keyframe_masks: dict[int, np.ndarray] = field(default_factory=dict)
     is_active: bool = True
+    clip_feature: np.ndarray | None = None
 
     @property
     def size(self) -> np.ndarray:
@@ -90,6 +93,7 @@ class CandidateState:
     frames_appeared: list[int] = field(default_factory=list)
     points_3d: np.ndarray = field(default_factory=lambda: np.zeros((0, 3), dtype=np.float32))
     keyframe_masks: dict[int, np.ndarray] = field(default_factory=dict)
+    clip_feature: np.ndarray | None = None
 
     @property
     def size(self) -> np.ndarray:
@@ -164,6 +168,7 @@ def build_segment_records(
     frame_ts: float | None = None,
     label: str | None = None,
     score: float = 1.0,
+    clip_features: np.ndarray | None = None,
 ) -> list[SegmentRecord]:
     masks_np = _to_numpy(masks)
     points_np = _to_numpy(points_3d)
@@ -182,6 +187,7 @@ def build_segment_records(
         pts = points_np[mask]
         if pose_world is not None:
             pts = transform_points(pts, pose_world)
+        clip_feat = clip_features[mask_id] if clip_features is not None else None
         segments.append(SegmentRecord(
             mask_id=mask_id,
             frame_index=frame_index,
@@ -193,6 +199,7 @@ def build_segment_records(
             label=label,
             score=score,
             frame_ts=frame_ts,
+            clip_feature=clip_feat.astype(np.float32) if clip_feat is not None else None,
         ))
     return segments
 
@@ -309,6 +316,7 @@ class InstanceTracker:
             frames_appeared=[frame_index],
             points_3d=seg.points_world.copy(),
             keyframe_masks={frame_index: mask},
+            clip_feature=seg.clip_feature.copy() if seg.clip_feature is not None else None,
         )
         return instance_id
 
@@ -324,6 +332,13 @@ class InstanceTracker:
         if seg.label and (cand.label is None or seg.score >= cand.score):
             cand.label = seg.label
         cand.score = max(cand.score, seg.score)
+        if seg.clip_feature is not None:
+            if cand.clip_feature is None:
+                cand.clip_feature = seg.clip_feature.copy()
+            else:
+                updated = alpha * cand.clip_feature + (1.0 - alpha) * seg.clip_feature
+                norm = np.linalg.norm(updated)
+                cand.clip_feature = updated / norm if norm > EPS else updated
 
     def _update_instance(self, inst: InstanceState, seg: SegmentRecord, frame_index: int, mask: np.ndarray | None = None) -> None:
         alpha = self.ema_decay
@@ -340,6 +355,13 @@ class InstanceTracker:
         if seg.label and (inst.label is None or seg.score >= inst.score):
             inst.label = seg.label
         inst.score = max(inst.score, seg.score)
+        if seg.clip_feature is not None:
+            if inst.clip_feature is None:
+                inst.clip_feature = seg.clip_feature.copy()
+            else:
+                updated = alpha * inst.clip_feature + (1.0 - alpha) * seg.clip_feature
+                norm = np.linalg.norm(updated)
+                inst.clip_feature = updated / norm if norm > EPS else updated
 
     def _promote_candidates(self, frame_index: int) -> None:
         window_start = frame_index - self.candidate_window_size
@@ -366,18 +388,23 @@ class InstanceTracker:
 
     def _prune_broken_candidates(self, frame_index: int) -> None:
         stale = [iid for iid, cand in self.candidate_instances.items()
-                 if cand.frames_appeared[-1] < frame_index - 2]
+                 if cand.frames_appeared[-1] < frame_index - self.candidate_window_size]
         for iid in stale:
             del self.candidate_instances[iid]
 
     def _score_pair(self, a, b) -> float:
         """Score similarity between any two objects with descriptor/centroid/bbox/size/label fields."""
+        w = self.merge_weights
         score = (
-            self.merge_weights.descriptor * _cosine_similarity(a.descriptor, b.descriptor)
-            + self.merge_weights.centroid  * _centroid_similarity(a.centroid, b.centroid, self.max_centroid_distance)
-            + self.merge_weights.iou       * _bbox_iou(a.bbox_min, a.bbox_max, b.bbox_min, b.bbox_max)
-            + self.merge_weights.size      * _size_similarity(a.size, b.size)
+            w.descriptor * _cosine_similarity(a.descriptor, b.descriptor)
+            + w.centroid  * _centroid_similarity(a.centroid, b.centroid, self.max_centroid_distance)
+            + w.iou       * _bbox_iou(a.bbox_min, a.bbox_max, b.bbox_min, b.bbox_max)
+            + w.size      * _size_similarity(a.size, b.size)
         )
+        a_clip = getattr(a, "clip_feature", None)
+        b_clip = getattr(b, "clip_feature", None)
+        if a_clip is not None and b_clip is not None:
+            score += w.clip * _cosine_similarity(a_clip, b_clip)
         if a.label and b.label and a.label != b.label:
             score *= self.label_mismatch_penalty
         return score
@@ -400,6 +427,17 @@ class InstanceTracker:
             all_keyframe_masks.update(inst.keyframe_masks)
 
         label, score = self._merge_labels(inst_list)
+
+        clip_pairs = [(w, inst.clip_feature) for w, inst in zip(weights, inst_list) if inst.clip_feature is not None]
+        if clip_pairs:
+            clip_w = np.array([p[0] for p in clip_pairs], dtype=np.float32)
+            clip_w /= clip_w.sum()
+            merged_clip = sum(cw * cf for cw, cf in zip(clip_w, [p[1] for p in clip_pairs])).astype(np.float32)
+            norm = np.linalg.norm(merged_clip)
+            merged_clip = merged_clip / norm if norm > EPS else merged_clip
+        else:
+            merged_clip = None
+
         return InstanceState(
             instance_id=min(inst.instance_id for inst in inst_list),
             descriptor=weighted_avg(inst.descriptor for inst in inst_list).astype(np.float32),
@@ -413,6 +451,7 @@ class InstanceTracker:
             points_3d=np.concatenate([inst.points_3d for inst in inst_list]).astype(np.float32),
             keyframes=all_keyframes,
             keyframe_masks=all_keyframe_masks,
+            clip_feature=merged_clip,
         )
 
     def _merge_labels(self, instances: Iterable[InstanceState]) -> tuple[str | None, float]:

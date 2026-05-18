@@ -7,6 +7,7 @@ paths:
     mast3r_retrieval: external/MASt3R-SLAM/checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth
     mast3r_original: external/MASt3R-SLAM/checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth
     segmast3r_head: external/segmast3r/checkpoints/heads_only.pt
+    clip:           null   # null = auto-download laion2b_s34b_b79k via open_clip
 # ------------------------------------------------------------------ #
 # Dataset                                                             #
 # ------------------------------------------------------------------ #
@@ -35,10 +36,11 @@ segmentation:
 # ------------------------------------------------------------------ #
 instance_tracker:
   merge_weights:
-    descriptor: 0.30
-    centroid:   0.25
-    iou:        0.25
+    descriptor: 0.25
+    centroid:   0.20
+    iou:        0.20
     size:       0.10
+    clip:       0.25
   merge_threshold:               0.75
   reattach_threshold:            0.40
   max_centroid_distance:         3.0
