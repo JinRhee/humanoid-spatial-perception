@@ -314,7 +314,8 @@ def run_pipeline(args):
             masks.unsqueeze(1).float(), size=(h, w), mode="nearest"
         ).squeeze(1)
 
-    prev_frame_obj = None   # set after INIT fires on i=0
+    prev_kf_frame = None
+    prev_kf_masks = None
 
     # ---------------------------------------------------------------
     # MASt3R-SLAM pipeline
@@ -322,7 +323,6 @@ def run_pipeline(args):
 
     i = 0
     fps_timer = time.time()
-
     frames = []
 
     while True:
@@ -350,9 +350,6 @@ def run_pipeline(args):
         if save_frames:
             frames.append(img)
 
-        instance_color_image = None
-
-        # get frames last camera pose
         T_WC = (
             lietorch.Sim3.Identity(1, device=device)
             if i == 0
@@ -361,181 +358,66 @@ def run_pipeline(args):
         frame = create_frame(i, img, T_WC, img_size=dataset.img_size, device=device)
 
         if mode == Mode.INIT:
-            prev_img_np = (img * 255).clip(0, 255).astype(np.uint8)
-            prev_seg_result = segmentor.segment(prev_img_np)
-            assert prev_seg_result.masks is not None
-            prev_masks_raw = prev_seg_result.masks.data
-            
-            # Initialize via mono inference, and encoded features neeed for database
             X_init, C_init = mast3r_inference_mono(model.mast3r, frame)
-            print(X_init.shape)
             frame.update_pointmap(X_init, C_init)
             keyframes.append(frame)
-
             states.queue_global_optimization(len(keyframes) - 1)
             states.set_mode(Mode.TRACKING)
             states.set_frame(frame)
 
-            # -- Segment frame 0 and initialize instance tracking --
+            # -- Process keyframe 0 --
+            # Bilateral inference isn't possible without a prior keyframe, so
+            # descriptors are placeholder zeros. Matching begins from keyframe 1.
             _, _, H_feat, W_feat = frame.img.shape
-            points_init = X_init.reshape(H_feat, W_feat, 3)
-            conf_init = C_init.reshape(H_feat, W_feat)
-            masks_0 = resize_masks(prev_masks_raw, H_feat, W_feat).unsqueeze(0)  # (1, M, H, W)
-            
-            # Get 3D points and confidence for segmentation
-            pose_world = frame.T_WC.matrix().squeeze(0).cpu().numpy()  # (4, 4)
-            
-            # Use placeholder descriptors since we only have monocular features in INIT.
-            # Proper bilateral descriptors and matching will begin from frame 1 onwards.
-            num_masks = masks_0.shape[1]
-            placeholder_descriptors = torch.zeros((1, 24, num_masks), device=device, dtype=torch.float32)
-            
-            # Build segment records from frame 0
+            img_np = (img * 255).clip(0, 255).astype(np.uint8)
+            seg_result = segmentor.segment(img_np)
+            assert seg_result.masks is not None
+            masks_raw = seg_result.masks.data
+            masks = resize_masks(masks_raw, H_feat, W_feat).unsqueeze(0)
+            placeholder_desc = torch.zeros((1, 24, masks.shape[1]), device=device, dtype=torch.float32)
+
             segment_records = build_segment_records(
                 frame_index=0,
-                masks=masks_0,
-                points_3d=points_init,
-                conf=conf_init,
-                descriptors=placeholder_descriptors,
-                pose_world=pose_world,
+                masks=masks,
+                points_3d=X_init.reshape(H_feat, W_feat, 3),
+                conf=C_init.reshape(H_feat, W_feat),
+                descriptors=placeholder_desc,
+                pose_world=frame.T_WC.matrix().squeeze(0).cpu().numpy(),
                 frame_ts=timestamp,
                 label=None,
                 score=1.0,
             )
-            
-            # Store segments and initialize instance tracking
             seg_store.add_segments(0, segment_records)
-            instance_tracker.update_frame(
-                segments=segment_records,
-                frame_index=0,
-                match_result=None,  # No matching on frame 0 (no prior frame)
-                masks=masks_0[0],
-            )
-            
-            # Build and send instance color visualization
+            instance_tracker.update_frame(segments=segment_records, frame_index=0, masks=masks[0])
+
             valid_ids = set(instance_tracker.valid_instances.keys())
             instance_color_image = build_instance_color_image(
-                segment_records,
-                masks_0,
-                H_feat,
-                W_feat,
-                valid_ids,
+                segment_records, masks, H_feat, W_feat, valid_ids,
             )
-            msg = {
-                "frame_index": 0,
+            main2viz.put({
+                "frame_index": i,
                 "instances": instance_tracker.summaries(),
                 "point_colors": instance_color_image,
                 "keyframe_point_colors": instance_color_image,
-            }
-            main2viz.put(msg)
+            })
 
-            prev_frame_obj = frame
+            prev_kf_frame = frame
+            prev_kf_masks = masks_raw
             i += 1
             continue
 
+        add_new_kf = False
         if mode == Mode.TRACKING:
-            # -- Segment current frame --
-            curr_img_np = (img * 255).clip(0, 255).astype(np.uint8) # img is in np.float32
-            curr_seg_result = segmentor.segment(curr_img_np)
-            assert curr_seg_result.masks is not None
-            curr_masks_raw = curr_seg_result.masks.data
-
-            # -- Resize masks to MASt3R feature map resolution --
-            _, _, H_feat, W_feat = prev_frame_obj.img.shape
-            masks_i = resize_masks(prev_masks_raw, H_feat, W_feat).unsqueeze(0)  # (1, M, H, W)
-            masks_j = resize_masks(curr_masks_raw, H_feat, W_feat).unsqueeze(0)  # (1, N, H, W)
-
-            # -- Unified inference --
-            if masks_i.shape[1] > 0 and masks_j.shape[1] > 0:
-                (X, C, D, Q), match_result, agg_desc_i, agg_desc_j = model.infer_unified(
-                    prev_frame_obj,
-                    frame,
-                    masks_i,
-                    masks_j,
-                    debug=os.environ.get("HSP_DEBUG_UNIFIED", "0") == "1",
-                )
-
-                # -- Build SegmentRecords for current frame --
-                # X[0] is res11 pts3d: current frame as reference, (H, W, 3)
-                # C[0] is res11 conf:  (H, W)
-                # agg_desc_j is pooled descriptors for current frame: (1, 24, N)
-                # pose_world: use frame.T_WC to transform points into world frame
-                pose_world = frame.T_WC.matrix().squeeze(0).cpu().numpy()  # (4, 4)
-
-                segment_records = build_segment_records(
-                    frame_index=i,
-                    masks=masks_j,                          # (1, N, H, W)
-                    points_3d=X[0],                         # (H, W, 3)
-                    conf=C[0],                              # (H, W)
-                    descriptors=agg_desc_j,                 # (1, 24, N)
-                    pose_world=pose_world,
-                    frame_ts=timestamp,
-                    label=None,                             # FastSAM is class-agnostic
-                    score=1.0,                              # placeholder
-                )
-
-                # -- Store results --
-                match_result_cpu = match_result[0].detach().cpu().numpy()
-                seg_store.add_segments(i, segment_records)
-                seg_store.add_match_result(i - 1, i, match_result_cpu)
-                # print(match_result_cpu)
-
-                # -- Update instance tracker --
-                prev_match_result = seg_store.get_match_result(i - 1, i)
-                instance_tracker.update_frame(
-                    segments=segment_records,
-                    frame_index=i,
-                    match_result=prev_match_result,
-                    masks=masks_j[0],
-                )
-
-                # Resweep before building colors so the image reflects post-merge IDs
-                if i > 0 and i % 3 == 0 and len(instance_tracker.valid_instances) >= 2:
-                    before = len(instance_tracker.valid_instances)
-                    instance_tracker.resweep()
-                    print(f"[resweep] {before} -> {len(instance_tracker.valid_instances)}")
-
-                valid_ids = set(instance_tracker.valid_instances.keys())
-                instance_color_image = build_instance_color_image(
-                    segment_records, masks_j, H_feat, W_feat, valid_ids,
-                )
-                msg = {
-                    "frame_index": i,
-                    "instances": instance_tracker.summaries(),
-                }
-                if i == 0 or app_config.get("visualization", {}).get("mask_point_colors_every_frame", True):
-                    msg["point_colors"] = instance_color_image
-                main2viz.put(msg)
-
-                print(
-                    f"[seg] {i-1}->{i} | "
-                    f"masks: {masks_i.shape[1]}/{masks_j.shape[1]} | "
-                    f"matches: {np.sum(match_result_cpu >= 0)} | "
-                    f"instances: {len(instance_tracker.valid_instances)} | "
-                    f"candidates: {len(instance_tracker.candidate_instances)}"
-                )
-            else:
-                # No masks on one or both sides — SLAM only, no seg update
-                print(f"[seg] {i-1}->{i} | skipped (masks: {masks_i.shape[1]}/{masks_j.shape[1]})")
-
-            # -- SLAM tracking (always runs) --
-            # Note: tracker internally re-decodes via mast3r_match_asymmetric.
-            # Encoder cache on frame means _encode_image is skipped.
-            add_new_kf, match_info, try_reloc = tracker.track(frame)
+            add_new_kf, _, try_reloc = tracker.track(frame)
             if try_reloc:
                 states.set_mode(Mode.RELOC)
             states.set_frame(frame)
-
-            # -- Roll forward --
-            prev_frame_obj = frame
-            prev_masks_raw = curr_masks_raw
 
         elif mode == Mode.RELOC:
             X, C = mast3r_inference_mono(model.mast3r, frame)
             frame.update_pointmap(X, C)
             states.set_frame(frame)
             states.queue_reloc()
-            # In single threaded mode, make sure relocalization happen for every frame
             while config["single_thread"]:
                 with states.lock:
                     if states.reloc_sem.value == 0:
@@ -547,25 +429,87 @@ def run_pipeline(args):
 
         if add_new_kf:
             keyframes.append(frame)
-            states.queue_global_optimization(len(keyframes) - 1)
-            
-            # In single threaded mode, wait for the backend to finish
+            kf_idx = len(keyframes) - 1
+            states.queue_global_optimization(kf_idx)
+
             while config["single_thread"]:
                 with states.lock:
                     if len(states.global_optimizer_tasks) == 0:
                         break
                 time.sleep(0.01)
 
-            if instance_color_image is not None:
-                main2viz.put(
-                    {
-                        "frame_index": i,
-                        "keyframe_frame_id": int(frame.frame_id),
-                        "keyframe_point_colors": instance_color_image,
-                    }
+            # -- Segment new keyframe and run SegMASt3R against prev keyframe --
+            img_np = (img * 255).clip(0, 255).astype(np.uint8)
+            seg_result = segmentor.segment(img_np)
+            assert seg_result.masks is not None
+            curr_masks_raw = seg_result.masks.data
+
+            _, _, H_feat, W_feat = frame.img.shape
+            masks_i = resize_masks(prev_kf_masks, H_feat, W_feat).unsqueeze(0)
+            masks_j = resize_masks(curr_masks_raw, H_feat, W_feat).unsqueeze(0)
+
+            instance_color_image = None
+            if masks_i.shape[1] > 0 and masks_j.shape[1] > 0:
+                (X, C, _, _), match_result, _, agg_desc_j = model.infer_unified(
+                    prev_kf_frame, frame, masks_i, masks_j,
+                    debug=os.environ.get("HSP_DEBUG_UNIFIED", "0") == "1",
+                )
+                pose_world = frame.T_WC.matrix().squeeze(0).cpu().numpy()
+                segment_records = build_segment_records(
+                    frame_index=kf_idx,
+                    masks=masks_j,
+                    points_3d=X[0],
+                    conf=C[0],
+                    descriptors=agg_desc_j,
+                    pose_world=pose_world,
+                    frame_ts=timestamp,
+                    label=None,
+                    score=1.0,
+                )
+                match_result_cpu = match_result[0].detach().cpu().numpy()
+                seg_store.add_segments(kf_idx, segment_records)
+
+                instance_tracker.update_frame(
+                    segments=segment_records,
+                    frame_index=kf_idx,
+                    match_result=match_result_cpu,
+                    masks=masks_j[0],
                 )
 
-        # log time
+                if kf_idx % 3 == 0 and len(instance_tracker.valid_instances) >= 2:
+                    before = len(instance_tracker.valid_instances)
+                    instance_tracker.resweep()
+                    print(f"[resweep] {before} -> {len(instance_tracker.valid_instances)}")
+
+                valid_ids = set(instance_tracker.valid_instances.keys())
+                instance_color_image = build_instance_color_image(
+                    segment_records, masks_j, H_feat, W_feat, valid_ids,
+                )
+                print(
+                    f"[seg] kf{kf_idx-1}->kf{kf_idx} | "
+                    f"masks: {masks_i.shape[1]}/{masks_j.shape[1]} | "
+                    f"matches: {np.sum(match_result_cpu >= 0)} | "
+                    f"instances: {len(instance_tracker.valid_instances)} | "
+                    f"candidates: {len(instance_tracker.candidate_instances)}"
+                )
+            else:
+                print(f"[seg] kf{kf_idx} | skipped (masks: {masks_i.shape[1]}/{masks_j.shape[1]})")
+
+            msg = {"frame_index": i, "instances": instance_tracker.summaries()}
+            if instance_color_image is not None:
+                msg["point_colors"] = instance_color_image
+            main2viz.put(msg)
+
+            if instance_color_image is not None:
+                main2viz.put({
+                    "frame_index": i,
+                    "keyframe_frame_id": int(frame.frame_id),
+                    "keyframe_point_colors": instance_color_image,
+                })
+
+            prev_kf_frame = frame
+            prev_kf_masks = curr_masks_raw
+
         if i % 30 == 0:
             FPS = i / (time.time() - fps_timer)
             print(f"FPS: {FPS}")
