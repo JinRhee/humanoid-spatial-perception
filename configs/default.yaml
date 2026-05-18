@@ -47,7 +47,7 @@ instance_tracker:
   min_support_count:             2
   skip_resweep:                  false
   candidate_promotion_threshold: 4
-  candidate_window_size:         10
+  candidate_window_size:         20
 
 visualization:
   # If true, send per-frame instance color overlays to the visualizer.

@@ -314,8 +314,11 @@ def run_pipeline(args):
             masks.unsqueeze(1).float(), size=(h, w), mode="nearest"
         ).squeeze(1)
 
-    prev_kf_frame = None
-    prev_kf_masks = None
+    SEG_K = 5
+    prev_seg_frame = None
+    prev_seg_masks = None
+    instance_color_image = None
+    mask_colors_every_frame = app_config.get("visualization", {}).get("mask_point_colors_every_frame", False)
 
     # ---------------------------------------------------------------
     # MASt3R-SLAM pipeline
@@ -401,8 +404,8 @@ def run_pipeline(args):
                 "keyframe_point_colors": instance_color_image,
             })
 
-            prev_kf_frame = frame
-            prev_kf_masks = masks_raw
+            prev_seg_frame = frame
+            prev_seg_masks = masks_raw
             i += 1
             continue
 
@@ -412,6 +415,72 @@ def run_pipeline(args):
             if try_reloc:
                 states.set_mode(Mode.RELOC)
             states.set_frame(frame)
+
+            if i % SEG_K == 0 and prev_seg_frame is not None:
+                img_np = (img * 255).clip(0, 255).astype(np.uint8)
+                seg_result = segmentor.segment(img_np)
+                assert seg_result.masks is not None
+                curr_masks_raw = seg_result.masks.data
+
+                _, _, H_feat, W_feat = frame.img.shape
+                masks_i = resize_masks(prev_seg_masks, H_feat, W_feat).unsqueeze(0)
+                masks_j = resize_masks(curr_masks_raw, H_feat, W_feat).unsqueeze(0)
+
+                if masks_i.shape[1] > 0 and masks_j.shape[1] > 0:
+                    (X, C, _, _), match_result, _, agg_desc_j = model.infer_unified(
+                        prev_seg_frame, frame, masks_i, masks_j,
+                        debug=os.environ.get("HSP_DEBUG_UNIFIED", "0") == "1",
+                    )
+                    pose_world = frame.T_WC.matrix().squeeze(0).cpu().numpy()
+                    segment_records = build_segment_records(
+                        frame_index=i,
+                        masks=masks_j,
+                        points_3d=X[0],
+                        conf=C[0],
+                        descriptors=agg_desc_j,
+                        pose_world=pose_world,
+                        frame_ts=timestamp,
+                        label=None,
+                        score=1.0,
+                    )
+                    match_result_cpu = match_result[0].detach().cpu().numpy()
+                    seg_store.add_segments(i, segment_records)
+
+                    instance_tracker.update_frame(
+                        segments=segment_records,
+                        frame_index=i,
+                        match_result=match_result_cpu,
+                        masks=masks_j[0],
+                    )
+
+                    if i % (3 * SEG_K) == 0 and len(instance_tracker.valid_instances) >= 2:
+                        before = len(instance_tracker.valid_instances)
+                        instance_tracker.resweep()
+                        print(f"[resweep] {before} -> {len(instance_tracker.valid_instances)}")
+
+                    valid_ids = set(instance_tracker.valid_instances.keys())
+                    instance_color_image = build_instance_color_image(
+                        segment_records, masks_j, H_feat, W_feat, valid_ids,
+                    )
+                    print(
+                        f"[seg] frame{i - SEG_K}->frame{i} | "
+                        f"masks: {masks_i.shape[1]}/{masks_j.shape[1]} | "
+                        f"matches: {np.sum(match_result_cpu >= 0)} | "
+                        f"instances: {len(instance_tracker.valid_instances)} | "
+                        f"candidates: {len(instance_tracker.candidate_instances)}"
+                    )
+                else:
+                    print(f"[seg] frame{i} | skipped (masks: {masks_i.shape[1]}/{masks_j.shape[1]})")
+
+                prev_seg_frame = frame
+                prev_seg_masks = curr_masks_raw
+
+                if not add_new_kf and instance_color_image is not None:
+                    main2viz.put({
+                        "frame_index": i,
+                        "instances": instance_tracker.summaries(),
+                        "point_colors": instance_color_image,
+                    })
 
         elif mode == Mode.RELOC:
             X, C = mast3r_inference_mono(model.mast3r, frame)
@@ -438,63 +507,6 @@ def run_pipeline(args):
                         break
                 time.sleep(0.01)
 
-            # -- Segment new keyframe and run SegMASt3R against prev keyframe --
-            img_np = (img * 255).clip(0, 255).astype(np.uint8)
-            seg_result = segmentor.segment(img_np)
-            assert seg_result.masks is not None
-            curr_masks_raw = seg_result.masks.data
-
-            _, _, H_feat, W_feat = frame.img.shape
-            masks_i = resize_masks(prev_kf_masks, H_feat, W_feat).unsqueeze(0)
-            masks_j = resize_masks(curr_masks_raw, H_feat, W_feat).unsqueeze(0)
-
-            instance_color_image = None
-            if masks_i.shape[1] > 0 and masks_j.shape[1] > 0:
-                (X, C, _, _), match_result, _, agg_desc_j = model.infer_unified(
-                    prev_kf_frame, frame, masks_i, masks_j,
-                    debug=os.environ.get("HSP_DEBUG_UNIFIED", "0") == "1",
-                )
-                pose_world = frame.T_WC.matrix().squeeze(0).cpu().numpy()
-                segment_records = build_segment_records(
-                    frame_index=kf_idx,
-                    masks=masks_j,
-                    points_3d=X[0],
-                    conf=C[0],
-                    descriptors=agg_desc_j,
-                    pose_world=pose_world,
-                    frame_ts=timestamp,
-                    label=None,
-                    score=1.0,
-                )
-                match_result_cpu = match_result[0].detach().cpu().numpy()
-                seg_store.add_segments(kf_idx, segment_records)
-
-                instance_tracker.update_frame(
-                    segments=segment_records,
-                    frame_index=kf_idx,
-                    match_result=match_result_cpu,
-                    masks=masks_j[0],
-                )
-
-                if kf_idx % 3 == 0 and len(instance_tracker.valid_instances) >= 2:
-                    before = len(instance_tracker.valid_instances)
-                    instance_tracker.resweep()
-                    print(f"[resweep] {before} -> {len(instance_tracker.valid_instances)}")
-
-                valid_ids = set(instance_tracker.valid_instances.keys())
-                instance_color_image = build_instance_color_image(
-                    segment_records, masks_j, H_feat, W_feat, valid_ids,
-                )
-                print(
-                    f"[seg] kf{kf_idx-1}->kf{kf_idx} | "
-                    f"masks: {masks_i.shape[1]}/{masks_j.shape[1]} | "
-                    f"matches: {np.sum(match_result_cpu >= 0)} | "
-                    f"instances: {len(instance_tracker.valid_instances)} | "
-                    f"candidates: {len(instance_tracker.candidate_instances)}"
-                )
-            else:
-                print(f"[seg] kf{kf_idx} | skipped (masks: {masks_i.shape[1]}/{masks_j.shape[1]})")
-
             msg = {"frame_index": i, "instances": instance_tracker.summaries()}
             if instance_color_image is not None:
                 msg["point_colors"] = instance_color_image
@@ -507,8 +519,8 @@ def run_pipeline(args):
                     "keyframe_point_colors": instance_color_image,
                 })
 
-            prev_kf_frame = frame
-            prev_kf_masks = curr_masks_raw
+        if mask_colors_every_frame and instance_color_image is not None:
+            main2viz.put({"frame_index": i, "point_colors": instance_color_image})
 
         if i % 30 == 0:
             FPS = i / (time.time() - fps_timer)
