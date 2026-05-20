@@ -10,6 +10,11 @@ from ultralytics import FastSAM, SAM
 import time
 from pathlib import Path
 
+try:
+    import torch as _torch
+except ImportError:
+    _torch = None
+
 
 def measure_time(func):
     """Decorator to measure function execution time"""
@@ -165,6 +170,31 @@ class SegmentationPipeline:
         self.visualize(image_path, segments, save_path, show)
 
         return segments
+
+
+class CLIPLabeler:
+    """Assigns semantic labels to segments via CLIP text–image cosine similarity."""
+
+    def __init__(self, keywords_path: str, clip_model, tokenizer, device):
+        with open(keywords_path) as f:
+            self.labels = [line.strip() for line in f if line.strip()]
+        tokens = tokenizer(self.labels).to(device)
+        with _torch.no_grad():
+            text_feats = clip_model.encode_text(tokens)
+            text_feats = text_feats / text_feats.norm(dim=-1, keepdim=True)
+        self._text_feats = text_feats.float().cpu().numpy()  # (K, 512)
+
+    def assign(self, clip_features: np.ndarray, threshold: float = 0.20) -> list:
+        """Return list[str | None] of length M. None when best sim < threshold."""
+        if clip_features is None or len(clip_features) == 0:
+            return []
+        sims = clip_features @ self._text_feats.T          # (M, K)
+        best_idx = sims.argmax(axis=1)                     # (M,)
+        best_score = sims[np.arange(len(sims)), best_idx]
+        return [
+            self.labels[int(i)] if float(s) >= threshold else None
+            for i, s in zip(best_idx, best_score)
+        ]
 
 
 # Example usage

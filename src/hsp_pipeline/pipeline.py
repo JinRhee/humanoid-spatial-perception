@@ -29,15 +29,13 @@ from mast3r_slam.tracker import FrameTracker
 from mast3r_slam.visualization import WindowMsg, run_visualization
 
 from .unified_inference import UnifiedMASt3RInfer
-from .instance_tracker_new import (
+from .instance_tracker import (
     InstanceTracker,
-    SegmentationStore,
     build_segment_records,
     MergeWeights,
-    SegmentRecord,
     instance_rgba,
 )
-from .segmentor import SegmentationPipeline
+from .segmentor import SegmentationPipeline, CLIPLabeler
 from .config import load_pipeline_config, overrides_from_args
 from . import evaluate as eval
 
@@ -322,16 +320,24 @@ def run_pipeline(args):
     else:
         print("[CLIP] open_clip not available; skipping CLIP features. Install: pip install open-clip-torch")
 
+    clip_labeler = None
+    label_threshold = 0.20
+    if clip_model is not None:
+        labeling_cfg = app_config.get("labeling", {})
+        kw_file = labeling_cfg.get("keywords_file")
+        label_threshold = labeling_cfg.get("threshold", 0.20)
+        if kw_file:
+            tokenizer = _open_clip.get_tokenizer("ViT-B-32")
+            clip_labeler = CLIPLabeler(kw_file, clip_model, tokenizer, device)
+            print(f"[CLIP] Labeler loaded {len(clip_labeler.labels)} keywords")
+
     # ---------------------------------------------------------------
-    # FrameTracker, SegmentationStore, InstanceTracker
+    # FrameTracker, InstanceTracker
     # ---------------------------------------------------------------
 
     # FrameTracker
     tracker = FrameTracker(model.mast3r, keyframes, device)
     last_msg = WindowMsg()
-
-    # SegmentationStore
-    seg_store = SegmentationStore()
 
     # InstanceTracker
     tracker_config = app_config["instance_tracker"].copy()
@@ -425,6 +431,7 @@ def run_pipeline(args):
             placeholder_desc = torch.zeros((1, 24, masks.shape[1]), device=device, dtype=torch.float32)
 
             clip_features_init = extract_clip_features(img_np, masks_raw, clip_model, clip_preprocess, device)
+            labels_init = clip_labeler.assign(clip_features_init, label_threshold) if clip_labeler and clip_features_init is not None else None
             segment_records = build_segment_records(
                 frame_index=0,
                 masks=masks,
@@ -433,20 +440,19 @@ def run_pipeline(args):
                 descriptors=placeholder_desc,
                 pose_world=frame.T_WC.matrix().squeeze(0).cpu().numpy(),
                 frame_ts=timestamp,
-                label=None,
+                labels=labels_init,
                 score=1.0,
                 clip_features=clip_features_init,
             )
-            seg_store.add_segments(0, segment_records)
             instance_tracker.update_frame(segments=segment_records, frame_index=0, masks=masks[0])
 
-            valid_ids = set(instance_tracker.valid_instances.keys())
+            valid_ids = instance_tracker.labeled_instance_ids()
             instance_color_image = build_instance_color_image(
                 segment_records, masks, H_feat, W_feat, valid_ids,
             )
             main2viz.put({
                 "frame_index": i,
-                "instances": instance_tracker.summaries(),
+                "instances": instance_tracker.labeled_summaries(),
                 "point_colors": instance_color_image,
                 "keyframe_point_colors": instance_color_image,
             })
@@ -480,6 +486,7 @@ def run_pipeline(args):
                     )
                     pose_world = frame.T_WC.matrix().squeeze(0).cpu().numpy()
                     clip_features = extract_clip_features(img_np, curr_masks_raw, clip_model, clip_preprocess, device)
+                    labels = clip_labeler.assign(clip_features, label_threshold) if clip_labeler and clip_features is not None else None
                     segment_records = build_segment_records(
                         frame_index=i,
                         masks=masks_j,
@@ -488,12 +495,11 @@ def run_pipeline(args):
                         descriptors=agg_desc_j,
                         pose_world=pose_world,
                         frame_ts=timestamp,
-                        label=None,
+                        labels=labels,
                         score=1.0,
                         clip_features=clip_features,
                     )
                     match_result_cpu = match_result[0].detach().cpu().numpy()
-                    seg_store.add_segments(i, segment_records)
 
                     instance_tracker.update_frame(
                         segments=segment_records,
@@ -507,7 +513,7 @@ def run_pipeline(args):
                         instance_tracker.resweep()
                         print(f"[resweep] {before} -> {len(instance_tracker.valid_instances)}")
 
-                    valid_ids = set(instance_tracker.valid_instances.keys())
+                    valid_ids = instance_tracker.labeled_instance_ids()
                     instance_color_image = build_instance_color_image(
                         segment_records, masks_j, H_feat, W_feat, valid_ids,
                     )
@@ -527,7 +533,7 @@ def run_pipeline(args):
                 if not add_new_kf and instance_color_image is not None:
                     main2viz.put({
                         "frame_index": i,
-                        "instances": instance_tracker.summaries(),
+                        "instances": instance_tracker.labeled_summaries(),
                         "point_colors": instance_color_image,
                     })
 
@@ -556,7 +562,7 @@ def run_pipeline(args):
                         break
                 time.sleep(0.01)
 
-            msg = {"frame_index": i, "instances": instance_tracker.summaries()}
+            msg = {"frame_index": i, "instances": instance_tracker.labeled_summaries()}
             if instance_color_image is not None:
                 msg["point_colors"] = instance_color_image
             main2viz.put(msg)

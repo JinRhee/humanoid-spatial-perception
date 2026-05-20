@@ -1,0 +1,12 @@
+chair
+monitor
+desk
+keyboard
+person
+door
+table
+bookshelf
+laptop
+sofa
+bed
+cabinet

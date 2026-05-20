@@ -13,7 +13,7 @@ from mast3r_slam.config import config
 from mast3r_slam.geometry import constrain_points_to_ray
 from plyfile import PlyData, PlyElement
 
-from .instance_tracker_new import InstanceTracker, instance_rgba
+from .instance_tracker import InstanceTracker, instance_rgba
 
 
 def prepare_savedir(args, dataset):
