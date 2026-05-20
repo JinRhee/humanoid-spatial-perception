@@ -35,7 +35,7 @@ from .instance_tracker import (
     MergeWeights,
     instance_rgba,
 )
-from .segmentor import SegmentationPipeline, CLIPLabeler
+from .segmentor import SegmentationPipeline, CLIPLabeler, create_segmentor
 from .config import load_pipeline_config, overrides_from_args
 from . import evaluate as eval
 
@@ -304,32 +304,37 @@ def run_pipeline(args):
     model.prepare(device)
     model.share_memory()
 
-    # FastSAM
-    segmentor = SegmentationPipeline(
-        app_config["paths"]["checkpoints"]["fastsam"],
-        seg_config=app_config.get("segmentation")
-    )
+    # Keywords (shared by CLIPLabeler and GroundedSAM2Segmentor)
+    labeling_cfg = app_config.get("labeling", {})
+    kw_file = labeling_cfg.get("keywords_file")
+    label_threshold = labeling_cfg.get("threshold", 0.20)
+    keywords = []
+    if kw_file:
+        with open(kw_file) as _f:
+            keywords = [l.strip() for l in _f if l.strip()]
 
-    # CLIP (optional — install open-clip-torch to enable)
+    # Segmentor
+    seg_cfg = {
+        **app_config.get("segmentation", {}),
+        "fastsam_checkpoint": app_config["paths"]["checkpoints"]["fastsam"],
+    }
+    segmentor = create_segmentor(seg_cfg, keywords=keywords)
+
+    # CLIP — only needed for FastSAM backend (grounded_sam2 gets labels from GDino)
+    seg_backend = app_config.get("segmentation", {}).get("backend", "fastsam")
     clip_model = clip_preprocess = None
-    if _OPEN_CLIP_AVAILABLE:
+    clip_labeler = None
+    if seg_backend == "fastsam" and _OPEN_CLIP_AVAILABLE:
         clip_ckpt = app_config["paths"]["checkpoints"].get("clip") or "laion2b_s34b_b79k"
         _clip_model, _, clip_preprocess = _open_clip.create_model_and_transforms("ViT-B-32", pretrained=clip_ckpt)
         clip_model = _clip_model.to(device).eval()
         print("[CLIP] Loaded ViT-B-32")
-    else:
-        print("[CLIP] open_clip not available; skipping CLIP features. Install: pip install open-clip-torch")
-
-    clip_labeler = None
-    label_threshold = 0.20
-    if clip_model is not None:
-        labeling_cfg = app_config.get("labeling", {})
-        kw_file = labeling_cfg.get("keywords_file")
-        label_threshold = labeling_cfg.get("threshold", 0.20)
         if kw_file:
             tokenizer = _open_clip.get_tokenizer("ViT-B-32")
             clip_labeler = CLIPLabeler(kw_file, clip_model, tokenizer, device)
             print(f"[CLIP] Labeler loaded {len(clip_labeler.labels)} keywords")
+    elif seg_backend == "fastsam" and not _OPEN_CLIP_AVAILABLE:
+        print("[CLIP] open_clip not available; skipping CLIP features. Install: pip install open-clip-torch")
 
     # ---------------------------------------------------------------
     # FrameTracker, InstanceTracker
@@ -365,10 +370,12 @@ def run_pipeline(args):
             masks.unsqueeze(1).float(), size=(h, w), mode="nearest"
         ).squeeze(1)
 
-    SEG_K = 5
+    SEG_MODE = "every_k"   # "every_k" | "keyframe"
+    SEG_K = 5               # used only when SEG_MODE == "every_k"
     prev_seg_frame = None
     prev_seg_masks = None
     instance_color_image = None
+    kf_count = 0            # keyframes seen; used for resweep cadence in keyframe mode
     mask_colors_every_frame = app_config.get("visualization", {}).get("mask_point_colors_every_frame", False)
 
     # ---------------------------------------------------------------
@@ -423,15 +430,20 @@ def run_pipeline(args):
             # Bilateral inference isn't possible without a prior keyframe, so
             # descriptors are placeholder zeros. Matching begins from keyframe 1.
             _, _, H_feat, W_feat = frame.img.shape
-            img_np = (img * 255).clip(0, 255).astype(np.uint8)
+            img_np = (frame.uimg.numpy() * 255).clip(0, 255).astype(np.uint8)
             seg_result = segmentor.segment(img_np)
+            if hasattr(segmentor, "release"):
+                segmentor.release()
             assert seg_result.masks is not None
             masks_raw = seg_result.masks.data
-            masks = resize_masks(masks_raw, H_feat, W_feat).unsqueeze(0)
+            masks = resize_masks(masks_raw, H_feat, W_feat).unsqueeze(0).to(device)
             placeholder_desc = torch.zeros((1, 24, masks.shape[1]), device=device, dtype=torch.float32)
 
             clip_features_init = extract_clip_features(img_np, masks_raw, clip_model, clip_preprocess, device)
-            labels_init = clip_labeler.assign(clip_features_init, label_threshold) if clip_labeler and clip_features_init is not None else None
+            seg_labels = getattr(seg_result, "labels", None)
+            labels_init = seg_labels if seg_labels is not None else (
+                clip_labeler.assign(clip_features_init, label_threshold) if clip_labeler and clip_features_init is not None else None
+            )
             segment_records = build_segment_records(
                 frame_index=0,
                 masks=masks,
@@ -469,15 +481,17 @@ def run_pipeline(args):
                 states.set_mode(Mode.RELOC)
             states.set_frame(frame)
 
-            if i % SEG_K == 0 and prev_seg_frame is not None:
-                img_np = (img * 255).clip(0, 255).astype(np.uint8)
+            if SEG_MODE == "every_k" and i % SEG_K == 0 and prev_seg_frame is not None:
+                img_np = (frame.uimg.numpy() * 255).clip(0, 255).astype(np.uint8)
                 seg_result = segmentor.segment(img_np)
+                if hasattr(segmentor, "release"):
+                    segmentor.release()
                 assert seg_result.masks is not None
                 curr_masks_raw = seg_result.masks.data
 
                 _, _, H_feat, W_feat = frame.img.shape
-                masks_i = resize_masks(prev_seg_masks, H_feat, W_feat).unsqueeze(0)
-                masks_j = resize_masks(curr_masks_raw, H_feat, W_feat).unsqueeze(0)
+                masks_i = resize_masks(prev_seg_masks, H_feat, W_feat).unsqueeze(0).to(device)
+                masks_j = resize_masks(curr_masks_raw, H_feat, W_feat).unsqueeze(0).to(device)
 
                 if masks_i.shape[1] > 0 and masks_j.shape[1] > 0:
                     (X, C, _, _), match_result, _, agg_desc_j = model.infer_unified(
@@ -486,7 +500,10 @@ def run_pipeline(args):
                     )
                     pose_world = frame.T_WC.matrix().squeeze(0).cpu().numpy()
                     clip_features = extract_clip_features(img_np, curr_masks_raw, clip_model, clip_preprocess, device)
-                    labels = clip_labeler.assign(clip_features, label_threshold) if clip_labeler and clip_features is not None else None
+                    seg_labels = getattr(seg_result, "labels", None)
+                    labels = seg_labels if seg_labels is not None else (
+                        clip_labeler.assign(clip_features, label_threshold) if clip_labeler and clip_features is not None else None
+                    )
                     segment_records = build_segment_records(
                         frame_index=i,
                         masks=masks_j,
@@ -555,12 +572,77 @@ def run_pipeline(args):
             keyframes.append(frame)
             kf_idx = len(keyframes) - 1
             states.queue_global_optimization(kf_idx)
+            kf_count += 1
 
             while config["single_thread"]:
                 with states.lock:
                     if len(states.global_optimizer_tasks) == 0:
                         break
                 time.sleep(0.01)
+
+            if SEG_MODE == "keyframe" and prev_seg_frame is not None:
+                _, _, H_feat, W_feat = frame.img.shape
+                img_np = (frame.uimg.numpy() * 255).clip(0, 255).astype(np.uint8)
+                seg_result = segmentor.segment(img_np)
+                if hasattr(segmentor, "release"):
+                    segmentor.release()
+                assert seg_result.masks is not None
+                curr_masks_raw = seg_result.masks.data
+
+                masks_i = resize_masks(prev_seg_masks, H_feat, W_feat).unsqueeze(0).to(device)
+                masks_j = resize_masks(curr_masks_raw, H_feat, W_feat).unsqueeze(0).to(device)
+
+                if masks_i.shape[1] > 0 and masks_j.shape[1] > 0:
+                    (X, C, _, _), match_result, _, agg_desc_j = model.infer_unified(
+                        prev_seg_frame, frame, masks_i, masks_j,
+                        debug=os.environ.get("HSP_DEBUG_UNIFIED", "0") == "1",
+                    )
+                    pose_world = frame.T_WC.matrix().squeeze(0).cpu().numpy()
+                    clip_features = extract_clip_features(img_np, curr_masks_raw, clip_model, clip_preprocess, device)
+                    seg_labels = getattr(seg_result, "labels", None)
+                    labels = seg_labels if seg_labels is not None else (
+                        clip_labeler.assign(clip_features, label_threshold) if clip_labeler and clip_features is not None else None
+                    )
+                    segment_records = build_segment_records(
+                        frame_index=i,
+                        masks=masks_j,
+                        points_3d=X[0],
+                        conf=C[0],
+                        descriptors=agg_desc_j,
+                        pose_world=pose_world,
+                        frame_ts=timestamp,
+                        labels=labels,
+                        score=1.0,
+                        clip_features=clip_features,
+                    )
+                    match_result_cpu = match_result[0].detach().cpu().numpy()
+                    instance_tracker.update_frame(
+                        segments=segment_records,
+                        frame_index=i,
+                        match_result=match_result_cpu,
+                        masks=masks_j[0],
+                    )
+
+                    if kf_count % 3 == 0 and len(instance_tracker.valid_instances) >= 2:
+                        before = len(instance_tracker.valid_instances)
+                        instance_tracker.resweep()
+                        print(f"[resweep] {before} -> {len(instance_tracker.valid_instances)}")
+
+                    valid_ids = instance_tracker.labeled_instance_ids()
+                    instance_color_image = build_instance_color_image(
+                        segment_records, masks_j, H_feat, W_feat, valid_ids,
+                    )
+                    print(
+                        f"[seg/kf] kf{kf_count} frame{i} | "
+                        f"masks: {masks_i.shape[1]}/{masks_j.shape[1]} | "
+                        f"matches: {np.sum(match_result_cpu >= 0)} | "
+                        f"instances: {len(instance_tracker.valid_instances)}"
+                    )
+                else:
+                    print(f"[seg/kf] frame{i} | skipped (masks: {masks_i.shape[1]}/{masks_j.shape[1]})")
+
+                prev_seg_frame = frame
+                prev_seg_masks = curr_masks_raw
 
             msg = {"frame_index": i, "instances": instance_tracker.labeled_summaries()}
             if instance_color_image is not None:
