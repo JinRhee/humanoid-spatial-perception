@@ -370,7 +370,7 @@ def run_pipeline(args):
             masks.unsqueeze(1).float(), size=(h, w), mode="nearest"
         ).squeeze(1)
 
-    SEG_MODE = "every_k"   # "every_k" | "keyframe"
+    SEG_MODE = "keyframe"   # "every_k" | "keyframe"
     SEG_K = 5               # used only when SEG_MODE == "every_k"
     prev_seg_frame = None
     prev_seg_masks = None
@@ -618,7 +618,7 @@ def run_pipeline(args):
                     match_result_cpu = match_result[0].detach().cpu().numpy()
                     instance_tracker.update_frame(
                         segments=segment_records,
-                        frame_index=i,
+                        frame_index=kf_count,
                         match_result=match_result_cpu,
                         masks=masks_j[0],
                     )
