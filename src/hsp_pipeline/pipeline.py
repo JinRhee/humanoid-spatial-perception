@@ -92,9 +92,12 @@ def relocalization(frame, keyframes, factor_graph, retrieval_database):
 
 
 def build_instance_color_image(
-    segments, masks, height: int, width: int, valid_instance_ids: set
+    segments, masks, height: int, width: int, valid_instance_ids: set, img_np: np.ndarray | None = None
 ) -> np.ndarray:
-    color_image = np.zeros((height, width, 3), dtype=np.float32)
+    if img_np is None:
+        color_image = np.zeros((height, width, 3), dtype=np.float32)
+    else:
+        color_image = img_np
     m = masks[0]
     masks_np = m.detach().cpu().numpy() if hasattr(m, "detach") else np.asarray(m)
     # Render highest IDs first so the lowest (oldest) ID wins on pixel overlap
@@ -460,7 +463,7 @@ def run_pipeline(args):
 
             valid_ids = instance_tracker.labeled_instance_ids()
             instance_color_image = build_instance_color_image(
-                segment_records, masks, H_feat, W_feat, valid_ids,
+                segment_records, masks, H_feat, W_feat, valid_ids, frame.uimg.numpy(),
             )
             main2viz.put({
                 "frame_index": i,
@@ -532,7 +535,7 @@ def run_pipeline(args):
 
                     valid_ids = instance_tracker.labeled_instance_ids()
                     instance_color_image = build_instance_color_image(
-                        segment_records, masks_j, H_feat, W_feat, valid_ids,
+                        segment_records, masks_j, H_feat, W_feat, valid_ids, frame.uimg.numpy(),
                     )
                     print(
                         f"[seg] frame{i - SEG_K}->frame{i} | "
@@ -630,7 +633,7 @@ def run_pipeline(args):
 
                     valid_ids = instance_tracker.labeled_instance_ids()
                     instance_color_image = build_instance_color_image(
-                        segment_records, masks_j, H_feat, W_feat, valid_ids,
+                        segment_records, masks_j, H_feat, W_feat, valid_ids, frame.uimg.numpy(),
                     )
                     print(
                         f"[seg/kf] kf{kf_count} frame{i} | "
@@ -645,19 +648,17 @@ def run_pipeline(args):
                 prev_seg_masks = curr_masks_raw
 
             msg = {"frame_index": i, "instances": instance_tracker.labeled_summaries()}
-            if instance_color_image is not None:
+
+            if instance_color_image is None:
+                msg["point_colors"] = frame.uimg.numpy()
+            else:
                 msg["point_colors"] = instance_color_image
+                msg["keyframe_frame_id"] = int(frame.frame_id)
+                msg["keyframe_point_colors"] = instance_color_image
+            
             main2viz.put(msg)
-
-            if instance_color_image is not None:
-                main2viz.put({
-                    "frame_index": i,
-                    "keyframe_frame_id": int(frame.frame_id),
-                    "keyframe_point_colors": instance_color_image,
-                })
-
-        if mask_colors_every_frame and instance_color_image is not None:
-            main2viz.put({"frame_index": i, "point_colors": instance_color_image})
+        
+        instance_color_image = None
 
         if i % 30 == 0:
             FPS = i / (time.time() - fps_timer)
