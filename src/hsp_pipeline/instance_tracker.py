@@ -216,7 +216,7 @@ class InstanceTracker:
         ema_decay: float = 0.7,
         min_support_count: int = 3,
         candidate_promotion_threshold: int = 3,
-        candidate_window_size: int = 10,
+        candidate_window_size: int = 5,
         skip_resweep: bool = False,
         label_filter: bool = False,
         **kwargs,
