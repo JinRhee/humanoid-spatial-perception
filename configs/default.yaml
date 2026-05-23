@@ -3,11 +3,9 @@
 # ------------------------------------------------------------------ #
 paths:
   checkpoints:
-    fastsam:          external/segmast3r/checkpoints/ultralytics/FastSAM-x.pt
     mast3r_retrieval: external/MASt3R-SLAM/checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth
     mast3r_original: external/MASt3R-SLAM/checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth
     segmast3r_head: external/segmast3r/checkpoints/heads_only.pt
-    clip:           null   # null = auto-download laion2b_s34b_b79k via open_clip
 # ------------------------------------------------------------------ #
 # Dataset                                                             #
 # ------------------------------------------------------------------ #
@@ -37,11 +35,11 @@ slam:
 #
 segmentation:
   backend:          grounded_sam2
-  sam2_checkpoint:  external/Grounded-SAM-2/checkpoints/sam2.1_hiera_base_plus.pt
-  sam2_config:      configs/sam2.1/sam2.1_hiera_b+.yaml
+  sam2_checkpoint:  external/Grounded-SAM-2/checkpoints/sam2.1_hiera_small.pt
+  sam2_config:      configs/sam2.1/sam2.1_hiera_s.yaml
   gdino_checkpoint: external/Grounded-SAM-2/gdino_checkpoints/groundingdino_swint_ogc.pth
   gdino_config:     external/Grounded-SAM-2/grounding_dino/groundingdino/config/GroundingDINO_SwinT_OGC.py
-  box_threshold:    0.35
+  box_threshold:    0.2
   text_threshold:   0.25
 
 # ------------------------------------------------------------------ #
@@ -60,7 +58,6 @@ instance_tracker:
     centroid:   0.25
     iou:        0.25
     size:       0.15
-    clip:       0.00
   merge_threshold:               0.75
   reattach_threshold:            0.40
   max_centroid_distance:         3.0
@@ -98,9 +95,8 @@ presets:
 
   near_realtime:
     segmentation:
-      conf:  0.4
-      iou:   0.5
+      conf:  0.3
+      iou:   0.4
       imgsz: 480
     fusion:
-      resweep_interval: 0
-      skip_resweep:     true
+      skip_resweep: false
