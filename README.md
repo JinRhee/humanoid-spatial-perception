@@ -9,9 +9,11 @@ sequence.txt:             estimated camera poses
 sequence_instances.ply:   pointcloud reconstruction of segmented instances within scene
 sequence_instances.json:  .json file of instance with labels and positions
 ```
-
+## Example
+### TUM RGB-D freiburg1_desk
 ![TUM desk demo](media/video_tum_desk.gif)
 
+### 7-Scenes office
 ![Instances](media/instances_office.png)
 ![Reconstruction](media/reconstruction_office.png)
 
