@@ -1,9 +1,39 @@
 # humanoid-spatial-perception
 
-Semantic 3D reconstruction orchestration wrapper around:
-- `external/MASt3R-SLAM`
-- `external/segmast3r`
-- `external/Grounded-SAM-2`
+This repository implements a solution for the task:
+```
+Build a system that takes a short video (e.g. captured on a phone), of a small indoor area such as a small room, and reconstructs a 3D scene.
+
+The core goal is geometric reconstruction from video. Semantic understanding is welcome, but optional.
+
+At a minimum, your system should:
+
+    Generate a 3D representation of the scene from video input
+
+    Produce a reconstruction that is geometrically coherent and consistent
+
+Optional extensions:
+
+    Assign semantic labels in 3D (e.g. tables, chairs)
+
+    Ensure any semantic predictions are aligned with the underlying geometry
+```
+
+The system is capable of creating a coherent reconstruction from a monocular video stream *without calibration* and segmenting objects
+using semantic labels in 3D in *near-real time*.
+
+Output:
+```
+sequence.ply:             pointcloud reconstruction of scene
+sequence.txt:             estimated camera poses
+sequence_instances.ply:   pointcloud reconstruction of segmented instances within scene
+sequence_instances.json:  .json file of instance with labels and positions
+```
+
+![TUM desk demo](media/video_tum_desk.mp4)
+
+![Instances](media/instances_office.png)
+![Reconstruction](media/reconstruction_office.png)
 
 ## Installation
 
@@ -48,29 +78,21 @@ wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge
 
 ### 4. Install SegMASt3R
 
-See [SegMASt3R](https://github.com/SegMASt3R/segmast3r) for full instructions. Summary:
+See [SegMASt3R](https://github.com/SegMASt3R/segmast3r) for original implementation. We use only their prediction heads.
+Download the pre-extracted heads checkpoint (downstream heads + feature matcher only, ~600 MB vs 3.5 GB for the full checkpoint):
 
 ```bash
-cd external/segmast3r
-pip install -e .
-cd ../..
+wget https://huggingface.co/JinRhee/segmast3r_heads_only/resolve/main/heads_only.pt \
+  -O external/segmast3r/checkpoints/heads_only.pt
 ```
 
-Download SegMASt3R checkpoint:
+Alternatively, extract the heads from the full checkpoint yourself:
 
 ```bash
-mkdir -p external/segmast3r/checkpoints
 wget https://huggingface.co/rjayanti/segmast3r/resolve/main/segmast3r_spp.ckpt \
   -O external/segmast3r/checkpoints/segmast3r_spp.ckpt
-```
-
-Extract the seg heads (strips the full encoder/decoder trunk, keeping only the downstream heads and feature matcher):
-
-```bash
 python tools/distill.py
 ```
-
-This writes `external/segmast3r/checkpoints/heads_only.pt`. Pass that path as `segmast3r_ckpt` to `UnifiedMASt3RInfer` — it loads ~10× faster than the full checkpoint and avoids holding the SegMASt3R trunk in memory.
 
 ### 5. Install Grounded-SAM-2
 
@@ -114,6 +136,48 @@ bash external/MASt3R-SLAM/scripts/download_euroc.sh
 
 Each script creates and populates a `datasets/<name>/` directory at the repo root.
 
+## Run
+
+```bash
+./run_pipeline \
+  --images_dir /absolute/path/to/images \
+  --config configs/pipeline.yaml \
+  --output_dir path/to/output
+
+# Example using 7-scenes office dataset
+./run_pipeline --dataset datasets/7-scenes/office/ --output_dir results --config configs/default.yaml
+
+# Example using 7-scenes fire dataset
+./run_pipeline --dataset datasets/7-scenes/fire/ --output_dir results --config configs/default.yaml
+
+# Example using TUM RGB-D 
+./run_pipeline --dataset datasets/tum/rgbd_dataset_freiburg1_desk --output_dir results --config configs/default.yaml
+```
+
+
+## Using known intrinsics
+
+Create a YAML file with the camera parameters at the original image resolution:
+
+```yaml
+width: 1920
+height: 1080
+calibration: [fx, fy, cx, cy]                    # no distortion
+# calibration: [fx, fy, cx, cy, k1, k2, p1, p2]  # with distortion (OpenCV convention)
+```
+
+Pass it with `--calib`:
+
+```bash
+./run_pipeline \
+  --dataset /path/to/images \
+  --config configs/default.yaml \
+  --output_dir /path/to/output \
+  --calib /path/to/calib.yaml
+```
+
+Without `--calib` the pipeline runs in uncalibrated mode using ray-based optimisation.
+
 ## Convert video to pipeline-ready images
 
 ```bash
@@ -127,16 +191,24 @@ Each script creates and populates a `datasets/<name>/` directory at the repo roo
 This writes JPEG frames named `images_<sec>_<nsec>.jpg`, matching the ingestion format used by the pipeline.
 It requires `ffmpeg` and `ffprobe` to be available on `PATH`.
 
-## Run
+# Notes
+MASt3R-SLAM is used as the main state estimator, providing a coherent and accurate geometry.
+SegMASt3R originally matches segments across two views. The segment masks usually come from segmentation models such as SAM2.
+Grounded-SAM-2 provides semantic labels and segmentations from a list of keywords in `configs/keywords.txt`.
 
-```bash
-./run_pipeline \
-  --images_dir /absolute/path/to/images \
-  --config /absolute/path/to/configs/pipeline.yaml \
-  --output_dir /absolute/path/to/output \
-  --preset balanced
-```
+The task conditions are taken literally; intrinsics or camera poses are assumed to be unknown, though the intrinsics can be used if known.
 
+SegMASt3R was chosen for matching as the work only adds downstream heads to the existing MASt3R model architecture used for MASt3R-SLAM.
+Matching (tracking) of segments can be achieved using a minimal change to the existing MASt3R model. It is also capable of two-view matching from images that have a large disparity. Thanks to this, semantic segmentation and matching only needs to occur at selected keyframes, and does not need to continuously track (which would hinder runtime performance).
+
+MASt3R is already surpassed by other feed-forward reconstruction models. Given camera poses from a state estimator, models such as DepthAnything v3 could be used for more accurate reconstructions.
+
+Semantic 3D reconstruction orchestration wrapper around:
+- `external/MASt3R-SLAM`
+- `external/segmast3r`
+- `external/Grounded-SAM-2`
+
+<!-- 
 ## Adapter configuration
 
 The pipeline expects adapter factories for MASt3R backbone + SLAM, Grounded-SAM-2, and SegMASt3R. These are configured in
@@ -157,4 +229,4 @@ Set `slam.factory`, `grounded_sam2.factory`, and `segmast3r.factory` to `module:
 - SegMASt3R: `encode_mask(features, mask)` returning a descriptor.
 
 For smoke testing without external dependencies, set `backbone.mode: stub`, `slam.mode: stub`, `grounded_sam2.mode: stub`,
-and `segmast3r.mode: stub` in the config.
+and `segmast3r.mode: stub` in the config. -->

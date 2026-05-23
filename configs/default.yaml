@@ -34,14 +34,13 @@ segmentation:
   text_threshold:   0.25
 
 # ------------------------------------------------------------------ #
-# Labeling (CLIP keyword matching)                                    #
+# Labeling                                                            #
 # ------------------------------------------------------------------ #
 labeling:
   keywords_file: configs/keywords.txt
-  threshold: 0.25   # min cosine similarity to assign a label; below this → None
 
 # ------------------------------------------------------------------ #
-# InstanceTracker                                            #
+# InstanceTracker                                                     #
 # ------------------------------------------------------------------ #
 instance_tracker:
   merge_weights:
@@ -60,34 +59,10 @@ instance_tracker:
   candidate_promotion_threshold: 4
   candidate_window_size:         100
 
-visualization:
-  # If true, send per-frame instance color overlays to the visualizer.
-  # If false, only keyframes include instance overlays (reduces color churn).
-  mask_point_colors_every_frame: True
 # ------------------------------------------------------------------ #
 # Presets                                                             #
 # ------------------------------------------------------------------ #
 presets:
-  quality:
-    segmentation:
-      conf:  0.3
-      iou:   0.4
-      imgsz: 1024
-    fusion:
-      skip_resweep: false
-
-  balanced:
-    segmentation:
-      conf:  0.3
-      iou:   0.4
-      imgsz: 768
-    fusion:
-      skip_resweep: false
-
-  near_realtime:
-    segmentation:
-      conf:  0.3
-      iou:   0.4
-      imgsz: 480
-    fusion:
-      skip_resweep: false
+  quality: {}
+  balanced: {}
+  near_realtime: {}
