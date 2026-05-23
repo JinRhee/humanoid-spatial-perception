@@ -76,7 +76,10 @@ This writes `external/segmast3r/checkpoints/heads_only.pt`. Pass that path as `s
 
 See [Grounded-SAM-2](https://github.com/IDEA-Research/Grounded-SAM-2) for full instructions. Summary:
 
+
 ```bash
+export CUDA_HOME=/path/to/cuda-12.8/
+
 cd external/Grounded-SAM-2
 pip install -e .
 pip install --no-build-isolation -e grounding_dino
@@ -84,7 +87,6 @@ cd ../..
 ```
 
 Download checkpoints:
-
 ```bash
 cd external/Grounded-SAM-2/checkpoints && bash download_ckpts.sh && cd ../../..
 cd external/Grounded-SAM-2/gdino_checkpoints && bash download_ckpts.sh && cd ../../..
