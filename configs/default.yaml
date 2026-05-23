@@ -3,8 +3,8 @@
 # ------------------------------------------------------------------ #
 paths:
   checkpoints:
-    mast3r_retrieval: external/MASt3R-SLAM/checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth
-    mast3r_original: external/MASt3R-SLAM/checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth
+    mast3r_retrieval: external/MASt3R-SLAM/checkpoints/mast3r_v2.pth
+    mast3r_original: external/MASt3R-SLAM/checkpoints/mast3r_v1.pth
     segmast3r_head: external/segmast3r/checkpoints/heads_only.pt
 # ------------------------------------------------------------------ #
 # Dataset                                                             #
