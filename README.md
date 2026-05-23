@@ -1,26 +1,6 @@
 # humanoid-spatial-perception
 
-This repository implements a solution for the task:
-```
-Build a system that takes a short video (e.g. captured on a phone), of a small indoor area such as a small room, and reconstructs a 3D scene.
-
-The core goal is geometric reconstruction from video. Semantic understanding is welcome, but optional.
-
-At a minimum, your system should:
-
-    Generate a 3D representation of the scene from video input
-
-    Produce a reconstruction that is geometrically coherent and consistent
-
-Optional extensions:
-
-    Assign semantic labels in 3D (e.g. tables, chairs)
-
-    Ensure any semantic predictions are aligned with the underlying geometry
-```
-
-The system is capable of creating a coherent reconstruction from a monocular video stream *without calibration* and segmenting objects
-using semantic labels in 3D in *near-real time*.
+This repository implements a method that creates a coherent reconstruction from a monocular video stream *without calibration* and segments objects using semantic labels in 3D in *near-real time* on a laptop-grade GPU.
 
 Output:
 ```
@@ -30,7 +10,7 @@ sequence_instances.ply:   pointcloud reconstruction of segmented instances withi
 sequence_instances.json:  .json file of instance with labels and positions
 ```
 
-![TUM desk demo](media/video_tum_desk.mp4)
+![TUM desk demo](media/video_tum_desk.gif)
 
 ![Instances](media/instances_office.png)
 ![Reconstruction](media/reconstruction_office.png)
