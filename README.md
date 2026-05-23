@@ -15,6 +15,46 @@ sequence_instances.json:  .json file of instance with labels and positions
 ### TUM RGB-D freiburg1_desk
 ![TUM desk demo](media/video_tum_desk.gif)
 
+### Example .json output
+```
+{
+    "instance_id": 0,
+    "label": "monitor",
+    "score": 23914800.0,
+    "support_count": 1132,
+    "last_seen": 305,
+    "centroid": [
+      -0.49060535430908203,
+      0.0665006935596466,
+      0.9251208305358887
+    ],
+    "bbox_min": [
+      -3.628385305404663,
+      -2.4940264225006104,
+      -0.43346789479255676
+    ],
+    "bbox_max": [
+      2.551426887512207,
+      3.1989927291870117,
+      5.131761074066162
+    ],
+    "keyframes": [
+      0,
+      0,
+      5,
+      5,
+      10,
+      15,
+      20,
+      24,
+      25,
+      50,
+      ...
+    ],
+    "num_points": 60362
+  },
+```
+
 ### 7-Scenes office
 ![Instances](media/instances_office.png)
 ![Reconstruction](media/reconstruction_office.png)
@@ -213,4 +253,5 @@ Set `slam.factory`, `grounded_sam2.factory`, and `segmast3r.factory` to `module:
 - SegMASt3R: `encode_mask(features, mask)` returning a descriptor.
 
 For smoke testing without external dependencies, set `backbone.mode: stub`, `slam.mode: stub`, `grounded_sam2.mode: stub`,
-and `segmast3r.mode: stub` in the config. -->
+and `segmast3r.mode: stub` in the config.
+-->
