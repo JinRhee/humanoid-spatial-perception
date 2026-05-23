@@ -227,6 +227,8 @@ Matching (tracking) of segments can be achieved using a minimal change to the ex
 
 MASt3R is already surpassed by other feed-forward reconstruction models. Given camera poses from a state estimator, models such as DepthAnything v3 could be used for more accurate reconstructions.
 
+Feed-forward models return pointmaps, which are pointclouds where every point has a corresponding pixel correspondance. Semantic masks predicted on the image therefore maps exactly to the 3D geometry; however this means that artefacts from image segmentation (i.e. patchy mask, undersegmentation, oversegmentation etc.) cannot be easily accounted for in the current state.
+
 Semantic 3D reconstruction orchestration wrapper around:
 - `external/MASt3R-SLAM`
 - `external/segmast3r`
