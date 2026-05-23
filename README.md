@@ -82,6 +82,8 @@ export CUDA_HOME=/path/to/cuda-12.8/
 
 cd external/Grounded-SAM-2
 pip install -e .
+pip install -r grounding_dino/requirements.txt  # install_requires is commented out in setup.py
+pip install transformers==4.37.0 # Latest transformer release incompatible
 pip install --no-build-isolation -e grounding_dino
 cd ../..
 ```
@@ -90,12 +92,6 @@ Download checkpoints:
 ```bash
 cd external/Grounded-SAM-2/checkpoints && bash download_ckpts.sh && cd ../../..
 cd external/Grounded-SAM-2/gdino_checkpoints && bash download_ckpts.sh && cd ../../..
-```
-
-### 6. Install this package
-
-```bash
-pip install -e .
 ```
 
 ## Datasets
