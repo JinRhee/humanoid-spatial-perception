@@ -1,3 +1,21 @@
+import sys
+import types
+
+# The PL checkpoint was pickled with a yacs CfgNode; stub it so we can
+# load tensors without needing yacs installed.
+class _CfgNodeStub(dict):
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+
+_yacs = types.ModuleType("yacs")
+_yacs_config = types.ModuleType("yacs.config")
+_yacs_config.CfgNode = _CfgNodeStub
+_yacs.config = _yacs_config
+sys.modules.setdefault("yacs", _yacs)
+sys.modules.setdefault("yacs.config", _yacs_config)
+
 import torch
 from pathlib import Path
 
