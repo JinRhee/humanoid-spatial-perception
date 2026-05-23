@@ -1,5 +1,7 @@
 # humanoid-spatial-perception
 
+[![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
+
 This repository implements a method that creates a coherent reconstruction from a monocular video stream *without calibration* and segments objects using semantic labels in 3D in *near-real time* on a laptop-grade GPU.
 
 Output:
