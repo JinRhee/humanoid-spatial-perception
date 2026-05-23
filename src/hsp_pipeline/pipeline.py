@@ -317,6 +317,7 @@ def run_pipeline(args):
             masks.unsqueeze(1).float(), size=(h, w), mode="nearest"
         ).squeeze(1)
 
+    SEG_EVERY_K = 5
     prev_seg_frame = None
     prev_seg_masks = None
     instance_color_image = None
@@ -448,24 +449,25 @@ def run_pipeline(args):
                         break
                 time.sleep(0.01)
 
-            if prev_seg_frame is not None:
-                _, _, H_feat, W_feat = frame.img.shape
-                img_np = (frame.uimg.numpy() * 255).clip(0, 255).astype(np.uint8)
-                seg_result = segmentor.segment(img_np)
-                if hasattr(segmentor, "release"):
-                    segmentor.release()
-                assert seg_result.masks is not None
-                curr_masks_raw = seg_result.masks.data
+        # Segment + match every K frames and at every keyframe.
+        if i % SEG_EVERY_K == 0 or add_new_kf:
+            _, _, H_feat, W_feat = frame.img.shape
+            img_np = (frame.uimg.numpy() * 255).clip(0, 255).astype(np.uint8)
+            seg_result = segmentor.segment(img_np)
+            if hasattr(segmentor, "release"):
+                segmentor.release()
+            assert seg_result.masks is not None
+            curr_masks_raw = seg_result.masks.data
 
+            if prev_seg_frame is not None:
                 masks_i = resize_masks(prev_seg_masks, H_feat, W_feat).unsqueeze(0).to(device)
                 masks_j = resize_masks(curr_masks_raw, H_feat, W_feat).unsqueeze(0).to(device)
 
                 if masks_i.shape[1] > 0 and masks_j.shape[1] > 0:
-                    with torch.cuda.amp.autocast():
-                        (X, C, _, _), match_result, _, agg_desc_j = model.infer_unified(
-                            prev_seg_frame, frame, masks_i, masks_j,
-                            debug=os.environ.get("HSP_DEBUG_UNIFIED", "0") == "1",
-                        )
+                    (X, C, _, _), match_result, _, agg_desc_j = model.infer_unified(
+                        prev_seg_frame, frame, masks_i, masks_j,
+                        debug=os.environ.get("HSP_DEBUG_UNIFIED", "0") == "1",
+                    )
                     print(match_result)
                     pose_world = frame.T_WC.matrix().squeeze(0).cpu().numpy()
                     labels = getattr(seg_result, "labels", None)
@@ -483,12 +485,12 @@ def run_pipeline(args):
                     match_result_cpu = match_result[0].detach().cpu().numpy()
                     instance_tracker.update_frame(
                         segments=segment_records,
-                        frame_index=kf_count,
+                        frame_index=i,
                         match_result=match_result_cpu,
                         masks=masks_j[0],
                     )
 
-                    if kf_count % 3 == 0 and len(instance_tracker.valid_instances) >= 2:
+                    if add_new_kf and kf_count % 3 == 0 and len(instance_tracker.valid_instances) >= 2:
                         before = len(instance_tracker.valid_instances)
                         instance_tracker.resweep()
                         print(f"[resweep] {before} -> {len(instance_tracker.valid_instances)}")
@@ -497,17 +499,18 @@ def run_pipeline(args):
                     instance_color_image = build_instance_color_image(
                         segment_records, masks_j, H_feat, W_feat, valid_ids, frame.uimg.numpy(),
                     )
+                    tag = "kf" if add_new_kf else "seg"
                     print(
-                        f"[seg/kf] kf{kf_count} frame{i} | "
+                        f"[{tag}] frame{i} prev={prev_seg_frame.frame_id} | "
                         f"masks: {masks_i.shape[1]}/{masks_j.shape[1]} | "
                         f"matches: {np.sum(match_result_cpu >= 0)} | "
                         f"instances: {len(instance_tracker.valid_instances)}"
                     )
                 else:
-                    print(f"[seg/kf] frame{i} | skipped (masks: {masks_i.shape[1]}/{masks_j.shape[1]})")
+                    print(f"[seg] frame{i} | skipped (masks: {masks_i.shape[1]}/{masks_j.shape[1]})")
 
-                prev_seg_frame = frame
-                prev_seg_masks = curr_masks_raw
+            prev_seg_frame = frame
+            prev_seg_masks = curr_masks_raw
 
             msg = {"frame_index": i, "instances": instance_tracker.labeled_summaries()}
 

@@ -53,7 +53,7 @@ class SegmentationStore:
 class MergeWeights:
     descriptor: float
     centroid: float
-    iou: float
+    overlap: float
     size: float
 
 
@@ -116,14 +116,17 @@ def _size_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return max(0.0, 1.0 - np.linalg.norm(a - b) / (np.linalg.norm(a) + np.linalg.norm(b) + EPS))
 
 
-def _bbox_iou(min_a, max_a, min_b, max_b) -> float:
+def _bbox_max_overlap(min_a, max_a, min_b, max_b) -> float:
+    """max(I/vol_a, I/vol_b) — high when either bbox is largely contained in the other."""
     min_a, max_a = np.asarray(min_a, dtype=np.float32), np.asarray(max_a, dtype=np.float32)
     min_b, max_b = np.asarray(min_b, dtype=np.float32), np.asarray(max_b, dtype=np.float32)
     inter = np.maximum(0.0, np.minimum(max_a, max_b) - np.maximum(min_a, min_b))
     inter_vol = float(np.prod(inter))
     vol_a = float(np.prod(np.maximum(0.0, max_a - min_a)))
     vol_b = float(np.prod(np.maximum(0.0, max_b - min_b)))
-    return inter_vol / (vol_a + vol_b - inter_vol + EPS)
+    if vol_a < EPS and vol_b < EPS:
+        return 0.0
+    return max(inter_vol / (vol_a + EPS), inter_vol / (vol_b + EPS))
 
 
 BOX_EDGES = np.array(
@@ -133,7 +136,7 @@ BOX_EDGES = np.array(
 
 
 def bbox_iou(min_a, max_a, min_b, max_b) -> float:
-    return _bbox_iou(min_a, max_a, min_b, max_b)
+    return _bbox_max_overlap(min_a, max_a, min_b, max_b)
 
 
 def bbox_corners(bbox_min: np.ndarray, bbox_max: np.ndarray) -> np.ndarray:
@@ -285,11 +288,15 @@ class InstanceTracker:
             mask = get_mask(seg)
             instance_id = assignments.get(idx)
 
-            # --- Phase 2: fallback — score unassigned segments against valid instances ---
+            # --- Phase 2: fallback — geometry-only score against valid instances and candidates ---
             if instance_id not in self.valid_instances and instance_id not in self.candidate_instances:
                 best_id, best_score = None, -1.0
                 for iid, inst in self.valid_instances.items():
-                    s = self._score_pair(inst, seg)
+                    s = self._score_pair_geometry(inst, seg)
+                    if s > best_score:
+                        best_score, best_id = s, iid
+                for iid, cand in self.candidate_instances.items():
+                    s = self._score_pair_geometry(cand, seg)
                     if s > best_score:
                         best_score, best_id = s, iid
                 if best_score >= self.reattach_threshold:
@@ -421,13 +428,29 @@ class InstanceTracker:
             print(f"[prune] {len(stale)} stale candidate(s) pruned: {stale}")
 
     def _score_pair(self, a, b) -> float:
+        """Full score including descriptor — for consecutive matching and resweep."""
         w = self.merge_weights
         score = (
             w.descriptor * _cosine_similarity(a.descriptor, b.descriptor)
             + w.centroid  * _centroid_similarity(a.centroid, b.centroid, self.max_centroid_distance)
-            + w.iou       * _bbox_iou(a.bbox_min, a.bbox_max, b.bbox_min, b.bbox_max)
+            + w.overlap   * _bbox_max_overlap(a.bbox_min, a.bbox_max, b.bbox_min, b.bbox_max)
             + w.size      * _size_similarity(a.size, b.size)
         )
+        if a.label and b.label and a.label != b.label:
+            score *= self.label_mismatch_penalty
+        return score
+
+    def _score_pair_geometry(self, a, b) -> float:
+        """Geometry-only score (no descriptor) — for cross-gap reattachment."""
+        w = self.merge_weights
+        total_geo = w.centroid + w.overlap + w.size
+        if total_geo < EPS:
+            return 0.0
+        score = (
+            w.centroid * _centroid_similarity(a.centroid, b.centroid, self.max_centroid_distance)
+            + w.overlap * _bbox_max_overlap(a.bbox_min, a.bbox_max, b.bbox_min, b.bbox_max)
+            + w.size    * _size_similarity(a.size, b.size)
+        ) / total_geo
         if a.label and b.label and a.label != b.label:
             score *= self.label_mismatch_penalty
         return score

@@ -23,20 +23,11 @@ slam:
 
 # ------------------------------------------------------------------ #
 # Segmentation                                                        #
-# backend: fastsam | grounded_sam2                                    #
 # ------------------------------------------------------------------ #
-# To use FastSAM instead, replace the segmentation block with:
-#
-# segmentation:
-#   backend: fastsam
-#   conf:    0.9
-#   iou:     0.9
-#   imgsz:   702
-#
 segmentation:
   backend:          grounded_sam2
-  sam2_checkpoint:  external/Grounded-SAM-2/checkpoints/sam2.1_hiera_small.pt
-  sam2_config:      configs/sam2.1/sam2.1_hiera_s.yaml
+  sam2_checkpoint:  external/Grounded-SAM-2/checkpoints/sam2.1_hiera_large.pt
+  sam2_config:      configs/sam2.1/sam2.1_hiera_l.yaml
   gdino_checkpoint: external/Grounded-SAM-2/gdino_checkpoints/groundingdino_swint_ogc.pth
   gdino_config:     external/Grounded-SAM-2/grounding_dino/groundingdino/config/GroundingDINO_SwinT_OGC.py
   box_threshold:    0.2
@@ -54,10 +45,10 @@ labeling:
 # ------------------------------------------------------------------ #
 instance_tracker:
   merge_weights:
-    descriptor: 0.35
-    centroid:   0.25
-    iou:        0.25
-    size:       0.15
+    descriptor: 0.10
+    centroid:   0.40
+    overlap:    0.40
+    size:       0.10
   merge_threshold:               0.75
   reattach_threshold:            0.40
   max_centroid_distance:         3.0
@@ -67,7 +58,7 @@ instance_tracker:
   min_support_count:             2
   skip_resweep:                  false
   candidate_promotion_threshold: 4
-  candidate_window_size:         20
+  candidate_window_size:         100
 
 visualization:
   # If true, send per-frame instance color overlays to the visualizer.
