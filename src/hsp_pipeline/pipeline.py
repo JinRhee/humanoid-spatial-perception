@@ -1,5 +1,4 @@
 import argparse
-import datetime
 import os
 import pathlib
 import sys
@@ -10,7 +9,6 @@ import lietorch
 import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
-import tqdm
 import yaml
 
 from pathlib import Path
@@ -184,8 +182,6 @@ def run_pipeline(args):
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.set_grad_enabled(False)
     device = "cuda:0"
-    save_frames = False
-    datetime_now = str(datetime.datetime.now()).replace(" ", "_")
 
     
     app_config = load_pipeline_config(
@@ -329,8 +325,6 @@ def run_pipeline(args):
 
     i = 0
     fps_timer = time.time()
-    frames = []
-
     while True:
         mode = states.get_mode()
         print(f"Mode:{mode}")
@@ -353,9 +347,6 @@ def run_pipeline(args):
             break
 
         timestamp, img = dataset[i]
-        if save_frames:
-            frames.append(img)
-
         T_WC = (
             lietorch.Sim3.Identity(1, device=device)
             if i == 0
@@ -543,14 +534,6 @@ def run_pipeline(args):
             save_dir / "keyframes" / seq_name, dataset.timestamps, keyframes
         )
         eval.save_instances(save_dir, seq_name, instance_tracker, keyframes=keyframes)
-
-    if save_frames:
-        savedir = pathlib.Path(f"logs/frames/{datetime_now}")
-        savedir.mkdir(exist_ok=True, parents=True)
-        for i, frame in tqdm.tqdm(enumerate(frames), total=len(frames)):
-            frame = (frame * 255).clip(0, 255)
-            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            cv2.imwrite(f"{savedir}/{i}.png", frame)
 
     print("done")
     backend.join()

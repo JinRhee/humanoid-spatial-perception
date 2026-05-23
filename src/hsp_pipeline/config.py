@@ -67,11 +67,4 @@ def overrides_from_args(args) -> dict:
         overrides.setdefault("dataset", {})["save_as"] = args.save_as
     if getattr(args, "no_viz", False):
         overrides.setdefault("slam", {})["no_viz"] = True
-    if getattr(args, "seg_conf", None) is not None:
-        overrides.setdefault("segmentation", {})["conf"] = args.seg_conf
-    if getattr(args, "seg_iou", None) is not None:
-        overrides.setdefault("segmentation", {})["iou"] = args.seg_iou
-    if getattr(args, "seg_imgsz", None) is not None:
-        overrides.setdefault("segmentation", {})["imgsz"] = args.seg_imgsz
-
     return overrides

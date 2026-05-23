@@ -17,8 +17,11 @@ from .instance_tracker import InstanceTracker, instance_rgba
 
 
 def prepare_savedir(args, dataset):
-    save_dir = pathlib.Path("logs")
-    if args.save_as != "default":
+    if hasattr(args, "output_dir") and args.output_dir is not None:
+        save_dir = pathlib.Path(args.output_dir)
+    else:
+        save_dir = pathlib.Path("logs")
+    if getattr(args, "save_as", "default") != "default":
         save_dir = save_dir / args.save_as
     save_dir.mkdir(exist_ok=True, parents=True)
     seq_name = dataset.dataset_path.stem

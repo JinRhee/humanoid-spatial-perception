@@ -31,23 +31,6 @@ class SegmentRecord:
         return self.bbox_max - self.bbox_min
 
 
-@dataclass
-class SegmentationStore:
-    segments_by_frame: dict[int, list[SegmentRecord]] = field(default_factory=dict)
-    matches_by_pair: dict[tuple[int, int], np.ndarray] = field(default_factory=dict)
-
-    def add_segments(self, frame_index: int, segments: list[SegmentRecord]) -> None:
-        self.segments_by_frame[frame_index] = segments
-
-    def add_match_result(self, frame_a: int, frame_b: int, match_result: np.ndarray) -> None:
-        self.matches_by_pair[(frame_a, frame_b)] = np.asarray(match_result)
-
-    def get_segments(self, frame_index: int) -> list[SegmentRecord]:
-        return self.segments_by_frame.get(frame_index, [])
-
-    def get_match_result(self, frame_a: int, frame_b: int) -> np.ndarray | None:
-        return self.matches_by_pair.get((frame_a, frame_b))
-
 
 @dataclass(frozen=True)
 class MergeWeights:
@@ -133,6 +116,7 @@ BOX_EDGES = np.array(
     [[0,1],[0,2],[1,3],[2,3],[4,5],[4,6],[5,7],[6,7],[0,4],[1,5],[2,6],[3,7]],
     dtype=np.int32,
 )
+
 
 
 def bbox_iou(min_a, max_a, min_b, max_b) -> float:
