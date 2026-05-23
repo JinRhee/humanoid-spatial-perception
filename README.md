@@ -64,6 +64,14 @@ wget https://huggingface.co/rjayanti/segmast3r/resolve/main/segmast3r_spp.ckpt \
   -O external/segmast3r/checkpoints/segmast3r_spp.ckpt
 ```
 
+Extract the seg heads (strips the full encoder/decoder trunk, keeping only the downstream heads and feature matcher):
+
+```bash
+python tools/distill.py
+```
+
+This writes `external/segmast3r/checkpoints/heads_only.pt`. Pass that path as `segmast3r_ckpt` to `UnifiedMASt3RInfer` — it loads ~10× faster than the full checkpoint and avoids holding the SegMASt3R trunk in memory.
+
 ### 5. Install Grounded-SAM-2
 
 See [Grounded-SAM-2](https://github.com/IDEA-Research/Grounded-SAM-2) for full instructions. Summary:
