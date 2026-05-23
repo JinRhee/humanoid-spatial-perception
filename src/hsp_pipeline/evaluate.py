@@ -13,12 +13,15 @@ from mast3r_slam.config import config
 from mast3r_slam.geometry import constrain_points_to_ray
 from plyfile import PlyData, PlyElement
 
-from .instance_tracker_new import InstanceTracker, instance_rgba
+from .instance_tracker import InstanceTracker, instance_rgba
 
 
 def prepare_savedir(args, dataset):
-    save_dir = pathlib.Path("logs")
-    if args.save_as != "default":
+    if hasattr(args, "output_dir") and args.output_dir is not None:
+        save_dir = pathlib.Path(args.output_dir)
+    else:
+        save_dir = pathlib.Path("logs")
+    if getattr(args, "save_as", "default") != "default":
         save_dir = save_dir / args.save_as
     save_dir.mkdir(exist_ok=True, parents=True)
     seq_name = dataset.dataset_path.stem
@@ -88,11 +91,48 @@ def save_keyframes(savedir, timestamps, keyframes: SharedKeyframes):
         )
 
 
-def save_instances(savedir, filename_stem, instance_tracker: InstanceTracker):
+def _reproject_instance_points(instance_tracker: InstanceTracker, keyframes: SharedKeyframes) -> None:
+    """Replace each instance's points_3d using final optimized keyframe poses.
+
+    During tracking, points are transformed to world space with the pose estimate
+    available at that moment.  By the time the run finishes the SLAM optimizer may
+    have refined those poses, so the stored points diverge from save_reconstruction.
+    Re-projecting here ensures both outputs are consistent.
+    """
+    kf_by_frame_id: dict[int, object] = {}
+    for i in range(len(keyframes)):
+        kf = keyframes[i]
+        kf_by_frame_id[int(kf.frame_id)] = kf
+
+    for inst in instance_tracker.valid_instances.values():
+        pts_list = []
+        for frame_idx, mask in inst.keyframe_masks.items():
+            kf = kf_by_frame_id.get(int(frame_idx))
+            if kf is None or mask is None:
+                continue
+            # X_canon: (H*W, 3) — camera-local points at keyframe resolution
+            X_world = kf.T_WC.act(kf.X_canon).cpu().numpy().reshape(-1, 3)
+            mask_flat = np.asarray(mask, dtype=bool).reshape(-1)
+            if mask_flat.shape[0] != X_world.shape[0]:
+                # mask resolution doesn't match keyframe resolution — skip
+                continue
+            pts_list.append(X_world[mask_flat])
+        if pts_list:
+            inst.points_3d = np.concatenate(pts_list, axis=0).astype(np.float32)
+
+
+def save_instances(savedir, filename_stem, instance_tracker: InstanceTracker,
+                   keyframes: Optional[SharedKeyframes] = None):
     savedir = pathlib.Path(savedir)
     savedir.mkdir(exist_ok=True, parents=True)
 
     keep, low_support = instance_tracker.final_split()
+
+    if keyframes is not None:
+        _reproject_instance_points(instance_tracker, keyframes)
+        # Re-read keep/low from the (now-updated) valid_instances
+        keep = [inst for inst in instance_tracker.valid_instances.values()
+                if inst.support_count >= instance_tracker.min_support_count]
     print(f"[save] {len(keep)} instances kept, {len(low_support)} discarded (low support)")
 
     # --- Manifest JSON ---

@@ -1,0 +1,11 @@
+chair
+monitor
+cup
+book
+keyboard
+person
+bookshelf
+laptop
+paper
+mouse
+headset

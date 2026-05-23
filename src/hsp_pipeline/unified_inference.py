@@ -49,9 +49,7 @@ class UnifiedMASt3RInfer(torch.nn.Module):
         )
 
         # Load SegMASt3R weights into seg heads
-        # seg_ckpt  = torch.load(segmast3r_ckpt, map_location="cpu", weights_only=False)
-        seg_ckpt  = torch.load("external/segmast3r/checkpoints/segmast3r_spp.ckpt",
-                        map_location="cpu", weights_only=False)
+        seg_ckpt = torch.load(segmast3r_ckpt, map_location="cpu", weights_only=False)
         seg_state = seg_ckpt["state_dict"]
 
         def extract(prefix):

@@ -1,3 +1,21 @@
+import sys
+import types
+
+# The PL checkpoint was pickled with a yacs CfgNode; stub it so we can
+# load tensors without needing yacs installed.
+class _CfgNodeStub(dict):
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+
+_yacs = types.ModuleType("yacs")
+_yacs_config = types.ModuleType("yacs.config")
+_yacs_config.CfgNode = _CfgNodeStub
+_yacs.config = _yacs_config
+sys.modules.setdefault("yacs", _yacs)
+sys.modules.setdefault("yacs.config", _yacs_config)
+
 import torch
 from pathlib import Path
 
@@ -19,14 +37,12 @@ if __name__ == "__main__":
   print(f"Matcher head parameters: {len(matcher_keys)}")
   
   # Save just the heads to a new checkpoint
+  out_path = "external/segmast3r/checkpoints/heads_only.pt"
   heads_only = {**head1_keys, **head2_keys, **matcher_keys}
-  torch.save({"state_dict": heads_only}, "heads_only.pt")
-  
-  # Or save individual heads
-  torch.save({"state_dict": head1_keys}, "head1_only.pt")
-  torch.save({"state_dict": head2_keys}, "head2_only.pt")
+  torch.save({"state_dict": heads_only}, out_path)
+  print(f"Saved heads-only checkpoint → {out_path}")
 
-  heads = torch.load("external/segmast3r/checkpoints/heads_only.pt", map_location="cpu", weights_only=False)
+  heads = torch.load(out_path, map_location="cpu", weights_only=False)
   state = heads["state_dict"]
   print(list(state.keys())[:100])   # what do the keys look like?
   print(f"total keys: {len(state)}")

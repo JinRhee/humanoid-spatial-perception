@@ -3,9 +3,8 @@
 # ------------------------------------------------------------------ #
 paths:
   checkpoints:
-    fastsam:          external/segmast3r/checkpoints/ultralytics/FastSAM-x.pt
-    mast3r_retrieval: external/MASt3R-SLAM/checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth
-    mast3r_original: external/MASt3R-SLAM/checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth
+    mast3r_retrieval: external/MASt3R-SLAM/checkpoints/mast3r_v2.pth
+    mast3r_original: external/MASt3R-SLAM/checkpoints/mast3r_v1.pth
     segmast3r_head: external/segmast3r/checkpoints/heads_only.pt
 # ------------------------------------------------------------------ #
 # Dataset                                                             #
@@ -23,61 +22,47 @@ slam:
   no_viz: false
 
 # ------------------------------------------------------------------ #
-# Segmentation (FastSAM)                                             #
+# Segmentation                                                        #
 # ------------------------------------------------------------------ #
 segmentation:
-  conf:  0.9
-  iou:   0.9
-  imgsz: 702
+  backend:          grounded_sam2
+  sam2_checkpoint:  external/Grounded-SAM-2/checkpoints/sam2.1_hiera_large.pt
+  sam2_config:      configs/sam2.1/sam2.1_hiera_l.yaml
+  gdino_checkpoint: external/Grounded-SAM-2/gdino_checkpoints/groundingdino_swint_ogc.pth
+  gdino_config:     external/Grounded-SAM-2/grounding_dino/groundingdino/config/GroundingDINO_SwinT_OGC.py
+  box_threshold:    0.2
+  text_threshold:   0.25
 
 # ------------------------------------------------------------------ #
-# InstanceTracker                                            #
+# Labeling                                                            #
+# ------------------------------------------------------------------ #
+labeling:
+  keywords_file: configs/keywords.txt
+
+# ------------------------------------------------------------------ #
+# InstanceTracker                                                     #
 # ------------------------------------------------------------------ #
 instance_tracker:
   merge_weights:
-    descriptor: 0.30
-    centroid:   0.25
-    iou:        0.25
+    descriptor: 0.10
+    centroid:   0.40
+    overlap:    0.40
     size:       0.10
   merge_threshold:               0.75
   reattach_threshold:            0.40
   max_centroid_distance:         3.0
   label_mismatch_penalty:        0.1
+  label_filter:                  true
   ema_decay:                     0.85
   min_support_count:             2
-  skip_resweep:                  false
+  skip_resweep:                  true
   candidate_promotion_threshold: 4
-  candidate_window_size:         10
+  candidate_window_size:         100
 
-visualization:
-  # If true, send per-frame instance color overlays to the visualizer.
-  # If false, only keyframes include instance overlays (reduces color churn).
-  mask_point_colors_every_frame: True
 # ------------------------------------------------------------------ #
 # Presets                                                             #
 # ------------------------------------------------------------------ #
 presets:
-  quality:
-    segmentation:
-      conf:  0.3
-      iou:   0.4
-      imgsz: 1024
-    fusion:
-      skip_resweep: false
-
-  balanced:
-    segmentation:
-      conf:  0.3
-      iou:   0.4
-      imgsz: 768
-    fusion:
-      skip_resweep: false
-
-  near_realtime:
-    segmentation:
-      conf:  0.4
-      iou:   0.5
-      imgsz: 480
-    fusion:
-      resweep_interval: 0
-      skip_resweep:     true
+  quality: {}
+  balanced: {}
+  near_realtime: {}
