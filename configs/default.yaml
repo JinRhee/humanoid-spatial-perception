@@ -56,7 +56,7 @@ instance_tracker:
   label_filter:                  true
   ema_decay:                     0.85
   min_support_count:             2
-  skip_resweep:                  false
+  skip_resweep:                  true
   candidate_promotion_threshold: 4
   candidate_window_size:         100
 

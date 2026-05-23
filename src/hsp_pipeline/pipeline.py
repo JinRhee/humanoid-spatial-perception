@@ -542,7 +542,7 @@ def run_pipeline(args):
         eval.save_keyframes(
             save_dir / "keyframes" / seq_name, dataset.timestamps, keyframes
         )
-        eval.save_instances(save_dir, seq_name, instance_tracker)
+        eval.save_instances(save_dir, seq_name, instance_tracker, keyframes=keyframes)
 
     if save_frames:
         savedir = pathlib.Path(f"logs/frames/{datetime_now}")
