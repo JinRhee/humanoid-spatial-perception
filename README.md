@@ -165,6 +165,20 @@ bash external/MASt3R-SLAM/scripts/download_euroc.sh
 
 Each script creates and populates a `datasets/<name>/` directory at the repo root.
 
+## Convert video to pipeline-ready images
+Alternatively, convert your own captured video into images.
+
+```bash
+./video_to_images \
+  --input_video /absolute/path/to/video.mp4 \
+  --output_dir /absolute/path/to/images \
+  --start_sec 0 \
+  --start_nsec 0
+```
+
+This writes JPEG frames named `images_<sec>_<nsec>.jpg`, matching the ingestion format used by the pipeline.
+It requires `ffmpeg` and `ffprobe` to be available on `PATH`.
+
 ## Run
 
 ```bash
@@ -206,19 +220,6 @@ Pass it with `--calib`:
 ```
 
 Without `--calib` the pipeline runs in uncalibrated mode using ray-based optimisation.
-
-## Convert video to pipeline-ready images
-
-```bash
-./video_to_images \
-  --input_video /absolute/path/to/video.mp4 \
-  --output_dir /absolute/path/to/images \
-  --start_sec 0 \
-  --start_nsec 0
-```
-
-This writes JPEG frames named `images_<sec>_<nsec>.jpg`, matching the ingestion format used by the pipeline.
-It requires `ffmpeg` and `ffprobe` to be available on `PATH`.
 
 # Design notes
 MASt3R-SLAM is used as the main state estimator, providing a coherent and accurate geometry.
