@@ -4,17 +4,7 @@
 
 This system creates a coherent reconstruction from a monocular video stream *without calibration or camera poses* and segments objects using semantic labels in 3D in *near-real time* on a *laptop-grade* GPU (RTX 3500 Ada Generation, 12GB VRAM). This repository makes heavy use of MASt3R, a feed-forward 3D reconstruction model. A SLAM method is used as the foundation, while semantic segmentation masks are generated in the pixel space. These semantic masks are matched over different views by exploiting MASt3R, and are reprojected into 3D points using the pixel-to-point correspondance of the model prediction outputs.
 
-### Why a SLAM pipeline?
-Feed-forward reconstruction models (MASt3R, VGGT, MapAnything, DepthAnything v3) show visually appealing results. However, their predictions are only precise (i.e. comparable with a physical sensor such as LiDAR) when given accurate poses (MapAnything, DepthAnything v3) or feature dense views.
-
-SLAM pipelines such as MASt3R-SLAM, VGGT-SLAM, etc. provide backend optimization (often through pose graphs) to ensure geometric coherence of the reconstruction.
-
-Further, feed-forward 3d reconstruction models (VGGT, MapAnything) perform best when an entire image sequence (50~60 images) are fed through at once. This places a minimum requirement on GPU VRAM (i.e. server / desktop GPUs), making mobile deployment difficult. SLAM pipelines such as MASt3R-SLAM or VGGT-SLAM only use a handful of images per inference, making it viable on mobile platforms such as a humanoid.
-
-### Why not VGGT, MapAnything, or any SOTA model?
-We could definitely use other SOTA models. For the convenient use of SegMASt3R (which relies on pixel-match predictions from MASt3R), MASt3R is used. The foundation model could be easily swapped to other models, provided that a different matching method is used (i.e. SAM2 tracking).
-
-Pose estimates from a separate localization pipeline could also be fed into newer models such as MapAnything or DepthAnything v3 for more accurate reconstructions.
+See [Design Notes](#design-notes) for discussion.
 
 ## Example
 ### Input / Output:
@@ -230,7 +220,7 @@ Without `--calib` the pipeline runs in uncalibrated mode using ray-based optimis
 This writes JPEG frames named `images_<sec>_<nsec>.jpg`, matching the ingestion format used by the pipeline.
 It requires `ffmpeg` and `ffprobe` to be available on `PATH`.
 
-# Notes
+# Design notes
 MASt3R-SLAM is used as the main state estimator, providing a coherent and accurate geometry.
 SegMASt3R originally matches segments across two views. The segment masks usually come from segmentation models such as SAM2.
 Grounded-SAM-2 provides semantic labels and segmentations from a list of keywords in `configs/keywords.txt`.
@@ -248,6 +238,19 @@ Semantic 3D reconstruction orchestration wrapper around:
 - `external/MASt3R-SLAM`
 - `external/segmast3r`
 - `external/Grounded-SAM-2`
+
+
+### Why a SLAM pipeline?
+Feed-forward reconstruction models (MASt3R, VGGT, MapAnything, DepthAnything v3) show visually appealing results. However, their predictions are only precise (i.e. comparable with a physical sensor such as LiDAR) when given accurate poses (MapAnything, DepthAnything v3) or feature dense views.
+
+SLAM pipelines such as MASt3R-SLAM, VGGT-SLAM, etc. provide backend optimization (often through pose graphs) to ensure geometric coherence of the reconstruction.
+
+Further, feed-forward 3d reconstruction models (VGGT, MapAnything) perform best when an entire image sequence (50~60 images) are fed through at once. This places a minimum requirement on GPU VRAM (i.e. server / desktop GPUs), making mobile deployment difficult. SLAM pipelines such as MASt3R-SLAM or VGGT-SLAM only use a handful of images per inference, making it viable on mobile platforms such as a humanoid.
+
+### Why not VGGT, MapAnything, or any SOTA model?
+We could definitely use other SOTA models. For the convenient use of SegMASt3R (which relies on pixel-match predictions from MASt3R), MASt3R is used. The foundation model could be easily swapped to other models, provided that a different matching method is used (i.e. SAM2 tracking).
+
+Pose estimates from a separate localization pipeline could also be fed into newer models such as MapAnything or DepthAnything v3 for more accurate reconstructions.
 
 <!-- 
 ## Adapter configuration
