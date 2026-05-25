@@ -230,14 +230,14 @@ def main():
     ap.add_argument("files", nargs="+", help="Input .ply / .obj / .las file(s)")
     ap.add_argument("--frames",    type=int,   default=120,   help="Total frames for one full orbit (default 120)")
     ap.add_argument("--fps",       type=int,   default=15,    help="Output FPS (default 15)")
-    ap.add_argument("--width",     type=int,   default=1280,  help="Frame width in pixels (default 1280)")
-    ap.add_argument("--height",    type=int,   default=720,   help="Frame height in pixels (default 720)")
+    ap.add_argument("--width",     type=int,   default=None,  help="Frame width in pixels (default 640 for gif, 1280 for mp4)")
+    ap.add_argument("--height",    type=int,   default=None,  help="Frame height in pixels (default 360 for gif, 720 for mp4)")
     ap.add_argument("--elevation", type=float, default=25.0,  help="Camera elevation above horizontal in degrees (default 25)")
     ap.add_argument("--fov",       type=float, default=60.0,  help="Vertical field of view in degrees (default 60)")
     ap.add_argument("--radius",    type=float, default=1.5,   help="Orbit radius as a multiple of scene half-diagonal (default 1.5)")
     ap.add_argument("--format",    choices=["gif", "mp4"], default="gif",
                                                help="Output format (default gif)")
-    ap.add_argument("--outdir",    default=".",               help="Directory for output files (default: current dir)")
+    ap.add_argument("--outdir",    default="media",            help="Directory for output files (default: media/)")
     ap.add_argument(
         "--transform",
         default=None,
@@ -251,6 +251,12 @@ def main():
         ),
     )
     args = ap.parse_args()
+
+    # Format-dependent resolution defaults
+    if args.width is None:
+        args.width = 640 if args.format == "gif" else 1280
+    if args.height is None:
+        args.height = 360 if args.format == "gif" else 720
 
     out_dir = Path(args.outdir)
     out_dir.mkdir(parents=True, exist_ok=True)

@@ -19,17 +19,17 @@ sequence_instances.json:  .json file of instance with labels and positions
 
 ### TUM RGB-D freiburg1_desk
 ![TUM desk demo](media/video_tum_desk.gif)
-<div style="display:flex; gap:8px; align-items:flex-start;">
-  <img src="media/rgbd_dataset_freiburg1_desk_flyby.gif" alt="Reconstruction" style="width:48%; height:auto;" />
-  <img src="media/rgbd_dataset_freiburg1_desk_instances_flyby.gif" alt="Instances" style="width:48%; height:auto;" />
-</div>
 
+<table><tr>
+  <td><img src="media/rgbd_dataset_freiburg1_desk_flyby.gif" alt="Reconstruction"/></td>
+  <td><img src="media/rgbd_dataset_freiburg1_desk_instances_flyby.gif" alt="Instances"/></td>
+</tr></table>
 
 ### 7-Scenes office
-<div style="display:flex; gap:8px; align-items:flex-start;">
-  <img src="media/office_flyby.gif" alt="Reconstruction" style="width:48%; height:auto;" />
-  <img src="media/office_instances_flyby.gif" alt="Instances" style="width:48%; height:auto;" />
-</div>
+<table><tr>
+  <td><img src="media/office_flyby.gif" alt="Reconstruction"/></td>
+  <td><img src="media/office_instances_flyby.gif" alt="Instances"/></td>
+</tr></table>
 
 
 ### Example .json output
