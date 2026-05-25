@@ -2,7 +2,15 @@
 
 [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 
-This repository implements a method that creates a coherent reconstruction from a monocular video stream *without calibration* and segments objects using semantic labels in 3D in *near-real time* on a laptop-grade GPU.
+This repository implements a method that creates a coherent reconstruction from a monocular video stream *without calibration* and segments objects using semantic labels in 3D in *near-real time* on a *laptop-grade* GPU (RTX 3500 Ada Generation, 12GB VRAM).
+
+## Why a SLAM pipeline?
+Feed-forward reconstruction models (MASt3R, VGGT, MapAnything, DepthAnything v3) show visually appealing results. However, their predictions are only precise (i.e. comparable with a physical sensor such as LiDAR) when given accurate poses (MapAnything, DepthAnything v3) or easy views.
+
+SLAM pipelines such as MASt3R-SLAM, VGGT-SLAM, etc. provide backend optimization (often through pose graphs) to ensure geometric coherence of the reconstruction.
+
+Further, feed-forward 3d reconstruction models (VGGT, MapAnything) perform best when an entire image sequence (50~60 images) are fed through at once. This places a minimum requirement on GPU VRAM (i.e. server / desktop GPUs), making mobile deployment difficult. SLAM pipelines such as MASt3R-SLAM or VGGT-SLAM only use a handful of images per inference, making it viable on mobile platforms such as a humanoid.
+
 
 Output:
 ```
