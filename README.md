@@ -4,6 +4,8 @@
 
 This system creates a coherent reconstruction from a monocular video stream *without calibration or camera poses* and segments objects using semantic labels in 3D in *near-real time* on a *laptop-grade* GPU (RTX 3500 Ada Generation, 12GB VRAM). This repository makes heavy use of MASt3R, a feed-forward 3D reconstruction model. A SLAM method is used as the foundation, while semantic segmentation masks are generated in the pixel space. These semantic masks are matched over different views by exploiting MASt3R, and are reprojected into 3D points using the pixel-to-point correspondance of the model prediction outputs.
 
+**GIFs can take some time to load :)**
+
 See [Design Notes](#design-notes) for discussion.
 
 ## Example
