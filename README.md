@@ -181,8 +181,6 @@ bash external/MASt3R-SLAM/scripts/download_euroc.sh
 ```
 
 Each script creates and populates a `datasets/<name>/` directory at the repo root.
-
-## Convert video to pipeline-ready images
 Alternatively, convert your own captured video into images.
 
 ```bash
