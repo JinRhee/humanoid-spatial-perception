@@ -10,7 +10,7 @@ This system creates a coherent reconstruction from a monocular video stream *wit
 3. Mask propogation between images using SegMASt3R
 4. Reprojection of semantic labelled masks to points
 
-** Please wait for GIFs as they can take some time to load :)**
+**Please wait for GIFs as they can take some time to load :)**
 
 See [Design Notes](#design-notes) for discussion.
 
