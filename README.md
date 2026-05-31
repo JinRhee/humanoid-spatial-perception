@@ -2,9 +2,15 @@
 
 [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 
-This system creates a coherent reconstruction from a monocular video stream *without calibration or camera poses* and segments objects using semantic labels in 3D in *near-real time* on a *laptop-grade* GPU (RTX 3500 Ada Generation, 12GB VRAM). This repository makes heavy use of MASt3R, a feed-forward 3D reconstruction model. A SLAM method is used as the foundation, while semantic segmentation masks are generated in the pixel space. These semantic masks are matched over different views by exploiting MASt3R, and are reprojected into 3D points using the pixel-to-point correspondance of the model prediction outputs.
+This system creates a coherent reconstruction from a monocular video stream *without calibration or camera poses* and segments objects using semantic labels in 3D in *near-real time* on a *laptop-grade* GPU (RTX 3500 Ada Generation, 12GB VRAM).
 
-**GIFs can take some time to load :)**
+### Pipeline
+1. Pose tracking and reconstruction MASt3R-SLAM
+2. Semantic segmentation on images using Grounded SAM2
+3. Mask propogation between images using SegMASt3R
+4. Reprojection of semantic labelled masks to points
+
+** Please wait for GIFs as they can take some time to load :)**
 
 See [Design Notes](#design-notes) for discussion.
 
@@ -34,7 +40,8 @@ sequence_instances.json:  .json file of instance with labels and positions
 </tr></table>
 
 
-### Example .json output
+### Example .json output (contains semantic label and bounding box)
+
 ```
 {
     "instance_id": 0,
@@ -232,18 +239,18 @@ Pass it with `--calib`:
 Without `--calib` the pipeline runs in uncalibrated mode using ray-based optimisation.
 
 # Design notes
-MASt3R-SLAM is used as the main state estimator, providing a coherent and accurate geometry.
-SegMASt3R originally matches segments across two views. The segment masks usually come from segmentation models such as SAM2.
-Grounded-SAM-2 provides semantic labels and segmentations from a list of keywords in `configs/keywords.txt`.
 
-The task conditions are taken literally; intrinsics or camera poses are assumed to be unknown, though the intrinsics can be used if known.
+### Explanation
 
-SegMASt3R was chosen for matching as the work only adds downstream heads to the existing MASt3R model architecture used for MASt3R-SLAM.
-Matching (tracking) of segments can be achieved using a minimal change to the existing MASt3R model. It is also capable of two-view matching from images that have a large disparity. Thanks to this, semantic segmentation and matching only needs to occur at selected keyframes, and does not need to continuously track (which would hinder runtime performance).
+Predicted poses and reconstructions are taken from MASt3R, a feed-forward reconstruction model. We use these predictions sequentially within a SLAM pipeline (MASt3R-SLAM). Its optimization backend improves poses and the geometric coherence of the reconstruction.
 
-MASt3R is already surpassed by other feed-forward reconstruction models. Given camera poses from a state estimator, models such as DepthAnything v3 could be used for more accurate reconstructions.
+For every keyframe (currently set to every nth image), segmentation masks with corresponding semantic labels are generated from Grounded-SAM2. We use a bag-of-words approach using a list of keywords in `configs/keywords.txt`. These masks can be reprojected into 3D using the pixel-to-point correspondance of MASt3R predictions.
 
-Feed-forward models return pointmaps, which are pointclouds where every point has a corresponding pixel correspondance. Semantic masks predicted on the image therefore maps exactly to the 3D geometry; however this means that artefacts from image segmentation (i.e. patchy mask, undersegmentation, oversegmentation etc.) cannot be easily accounted for in the current state.
+We add a small prediction head to the MASt3R backbone (work from SegMASt3R) which returns matches between segmented objects in each keyframe. We use these matches to keep a record of valid objects and semantic labels.
+
+Finally, the record of valid objects and the reconstruction are used to return 1) a 3D reconstruction and 2) segmented pointcloud of every identified object with a corresponding label.
+
+Camera intrinsics and poses are assumed to be unknown, though the intrinsics can be optionally used for more accurate reconstructions.
 
 Semantic 3D reconstruction orchestration wrapper around:
 - `external/MASt3R-SLAM`
