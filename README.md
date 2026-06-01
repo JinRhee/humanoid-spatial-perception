@@ -85,7 +85,7 @@ sequence_instances.json:  .json file of instance with labels and positions
 
 ## Docker quick start
 
-The Docker image provides a lightweight dev shell that mounts this repository as a shared directory at `/workspace/hsp`. Follow all Installation steps below (steps 1–5) inside the container for GPU/ML dependencies.
+The Docker image provides a lightweight dev shell that mounts this repository as a shared directory at `/workspace/hsp`. Follow all Installation steps below inside the container for GPU/ML dependencies.
 
 ```bash
 docker build -t hsp-dev \
