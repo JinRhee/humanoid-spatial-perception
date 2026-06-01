@@ -85,7 +85,7 @@ sequence_instances.json:  .json file of instance with labels and positions
 
 ## Docker quick start
 
-The Docker image provides a lightweight dev shell that mounts this repository as a shared directory at `/workspace/hsp`. Follow the numbered installation steps below inside the container for GPU/ML dependencies.
+The Docker image provides a lightweight dev shell that mounts this repository as a shared directory at `/workspace/hsp`. Follow the numbered installation steps in the Installation section below inside the container for GPU/ML dependencies.
 
 ```bash
 docker build -t hsp-dev \
@@ -100,7 +100,7 @@ docker run --rm -it \
   hsp-dev
 ```
 
-Inside the container, follow the numbered installation steps below (starting with `git submodule update --init --recursive`). After completing them, you can run:
+After completing the Installation steps below, you can run:
 
 ```bash
 ./run_pipeline --help
