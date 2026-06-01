@@ -83,31 +83,6 @@ sequence_instances.json:  .json file of instance with labels and positions
 
 ## Installation
 
-## Docker quick start
-
-The Docker image provides a lightweight dev shell that mounts this repository as a shared directory at `/workspace/hsp`. Follow all Installation steps below inside the container for GPU/ML dependencies.
-
-```bash
-docker build -t hsp-dev \
-  --build-arg USER_UID=$(id -u) \
-  --build-arg USER_GID=$(id -g) \
-  .
-
-docker run --rm -it \
-  --gpus all \
-  -v "$(pwd)":/workspace/hsp \
-  -w /workspace/hsp \
-  hsp-dev
-```
-
-After completing the Installation steps below, you can run:
-
-```bash
-./run_pipeline --help
-```
-
-If you do not have NVIDIA Container Toolkit installed, omit `--gpus all`.
-
 ### 1. Clone submodules
 
 ```bash
@@ -186,6 +161,31 @@ Download checkpoints:
 cd external/Grounded-SAM-2/checkpoints && bash download_ckpts.sh && cd ../../..
 cd external/Grounded-SAM-2/gdino_checkpoints && bash download_ckpts.sh && cd ../../..
 ```
+
+### Docker quick start (dev environment)
+
+The Docker image provides a lightweight dev shell that mounts this repository as a shared directory at `/workspace/hsp`.
+
+```bash
+docker build -t hsp-dev \
+  --build-arg USER_UID=$(id -u) \
+  --build-arg USER_GID=$(id -g) \
+  .
+
+docker run --rm -it \
+  --gpus all \
+  -v "$(pwd)":/workspace/hsp \
+  -w /workspace/hsp \
+  hsp-dev
+```
+
+After starting the container, complete the Installation steps above to install Python dependencies and download checkpoints (system packages like git/cmake/ffmpeg are already included). Then you can run:
+
+```bash
+./run_pipeline --help
+```
+
+If you do not have NVIDIA Container Toolkit installed, omit `--gpus all`.
 
 ## Datasets
 
