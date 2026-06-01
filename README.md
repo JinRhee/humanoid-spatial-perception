@@ -83,6 +83,32 @@ sequence_instances.json:  .json file of instance with labels and positions
 
 ## Installation
 
+## Docker quick start
+
+The Docker image provides a lightweight dev shell that mounts this repository as a shared directory at `/workspace/hsp`. Follow the installation steps below inside the container for GPU/ML dependencies.
+
+```bash
+docker build -t hsp-dev \
+  --build-arg USER_UID=$(id -u) \
+  --build-arg USER_GID=$(id -g) \
+  .
+
+docker run --rm -it \
+  --gpus all \
+  -v "$(pwd)":/workspace/hsp \
+  -w /workspace/hsp \
+  hsp-dev
+```
+
+Inside the container:
+
+```bash
+git submodule update --init --recursive
+./run_pipeline --help
+```
+
+If you do not have NVIDIA Container Toolkit installed, omit `--gpus all`.
+
 ### 1. Clone submodules
 
 ```bash
