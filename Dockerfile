@@ -1,5 +1,6 @@
 FROM python:3.12-slim
 
+ARG WORKSPACE_DIR=/workspace/hsp
 ARG USERNAME=developer
 ARG USER_UID=1000
 ARG USER_GID=1000
@@ -17,8 +18,8 @@ RUN groupadd --gid ${USER_GID} ${USERNAME} \
   && useradd --uid ${USER_UID} --gid ${USER_GID} -m ${USERNAME}
 
 ENV PYTHONUNBUFFERED=1
-WORKDIR /workspace/hsp
-VOLUME ["/workspace/hsp"]
+WORKDIR ${WORKSPACE_DIR}
+VOLUME ["${WORKSPACE_DIR}"]
 USER ${USERNAME}
 
 CMD ["bash"]
